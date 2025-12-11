@@ -87,10 +87,21 @@ interface PredictionLog {
   simulatedProfit: number; // Potential profit on $10
 }
 
+interface Transaction {
+  id: number;
+  symbol: string;
+  action: "BUY" | "SELL";
+  amount: number;
+  profit: number;
+  time: string;
+}
+
 export default function Dashboard() {
   const [logs, setLogs] = useState<PredictionLog[]>([]);
   const [selectedStock, setSelectedStock] = useState(TOP_GAINERS[0]);
   const [chartData, setChartData] = useState(generateStockData(TOP_GAINERS[0].price));
+  const [balance, setBalance] = useState(100);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
 
   // Simulate Bot Activity
   useEffect(() => {
@@ -123,6 +134,21 @@ export default function Dashboard() {
       };
 
       setLogs(prev => [newLog, ...prev].slice(0, 50));
+
+      // AUTO-TRADE LOGIC: If confidence > 75%, execute trade
+      if (confidence > 75 && action !== "HOLD") {
+        setBalance(prev => prev + simulatedProfit);
+        const newTransaction: Transaction = {
+          id: Date.now(),
+          symbol: randomStock.symbol,
+          action: action as "BUY" | "SELL",
+          amount: investment,
+          profit: simulatedProfit,
+          time: new Date().toLocaleTimeString()
+        };
+        setTransactions(prev => [newTransaction, ...prev].slice(0, 50));
+      }
+
     }, 3000); // New prediction every 3 seconds for demo (user asked for 5 min)
 
     return () => clearInterval(interval);
@@ -187,7 +213,7 @@ export default function Dashboard() {
           </div>
           <div className="flex items-center gap-2">
             <Zap className="w-4 h-4 text-yellow-500" />
-            <span>Latency: <span className="text-white">12ms</span></span>
+            <span>Balance: <span className="text-white font-mono text-lg">${balance.toFixed(2)}</span></span>
           </div>
           <div className="flex items-center gap-2">
             <Activity className="w-4 h-4 text-green-500" />
@@ -289,61 +315,114 @@ export default function Dashboard() {
           </div>
         </section>
 
-        {/* Right Sidebar - Live Bot Logs */}
-        <aside className="col-span-3 flex flex-col h-[calc(100vh-7rem)] bg-black/20 border border-white/10">
-          <div className="p-3 border-b border-white/10 bg-black/40 flex items-center justify-between">
-            <h3 className="font-orbitron text-sm text-primary tracking-widest flex items-center gap-2">
-              <Activity className="w-4 h-4" /> LIVE SIGNALS
-            </h3>
-            <span className="text-[10px] text-muted-foreground font-mono animate-pulse">UPDATING...</span>
-          </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
-            <AnimatePresence initial={false}>
-              {logs.map((log) => (
-                <motion.div
-                  key={log.id}
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0 }}
-                  className="p-3 rounded border border-white/5 bg-white/5 hover:bg-white/10 transition-colors"
-                >
-                  <div className="flex justify-between items-start mb-1">
-                    <span className="font-bold text-white font-mono">{log.symbol}</span>
-                    <span className="text-[10px] text-muted-foreground">{log.time}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <Badge 
-                      variant="outline" 
-                      className={`text-[10px] h-5 px-1 border-0 ${
-                        log.action === 'BUY' ? 'bg-primary/20 text-primary' : 
-                        log.action === 'SELL' ? 'bg-destructive/20 text-destructive' : 
-                        'bg-white/10 text-white'
-                      }`}
-                    >
-                      {log.action}
-                    </Badge>
-                    <span className={`text-xs font-mono font-bold ${log.confidence > 85 ? 'text-green-400' : 'text-yellow-400'}`}>
-                      {log.confidence}% CONF
-                    </span>
-                  </div>
-                  
-                  {/* Simulated Profit Section */}
-                  {log.action !== 'HOLD' && (
-                    <div className="mt-2 p-2 bg-black/40 rounded border border-white/5 flex justify-between items-center">
-                      <span className="text-[10px] text-muted-foreground font-mono">Simulated $10 Trade:</span>
-                      <span className={`text-xs font-bold font-mono ${log.simulatedProfit >= 0 ? 'text-primary' : 'text-destructive'}`}>
-                        {log.simulatedProfit >= 0 ? '+' : ''}${log.simulatedProfit.toFixed(2)}
+        {/* Right Sidebar - Live Bot Logs & Transactions */}
+        <aside className="col-span-3 flex flex-col h-[calc(100vh-7rem)] gap-4">
+          
+          {/* Live Signals Panel (Top Half) */}
+          <div className="flex-1 flex flex-col bg-black/20 border border-white/10 overflow-hidden">
+            <div className="p-3 border-b border-white/10 bg-black/40 flex items-center justify-between">
+              <h3 className="font-orbitron text-sm text-primary tracking-widest flex items-center gap-2">
+                <Activity className="w-4 h-4" /> LIVE SIGNALS
+              </h3>
+              <span className="text-[10px] text-muted-foreground font-mono animate-pulse">SCANNING...</span>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
+              <AnimatePresence initial={false}>
+                {logs.map((log) => (
+                  <motion.div
+                    key={log.id}
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="p-3 rounded border border-white/5 bg-white/5 hover:bg-white/10 transition-colors"
+                  >
+                    <div className="flex justify-between items-start mb-1">
+                      <span className="font-bold text-white font-mono">{log.symbol}</span>
+                      <span className="text-[10px] text-muted-foreground">{log.time}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <Badge 
+                        variant="outline" 
+                        className={`text-[10px] h-5 px-1 border-0 ${
+                          log.action === 'BUY' ? 'bg-primary/20 text-primary' : 
+                          log.action === 'SELL' ? 'bg-destructive/20 text-destructive' : 
+                          'bg-white/10 text-white'
+                        }`}
+                      >
+                        {log.action}
+                      </Badge>
+                      <span className={`text-xs font-mono font-bold ${log.confidence > 85 ? 'text-green-400' : 'text-yellow-400'}`}>
+                        {log.confidence}% CONF
                       </span>
                     </div>
-                  )}
+                    
+                    {/* Simulated Profit Section */}
+                    {log.action !== 'HOLD' && (
+                      <div className="mt-2 p-2 bg-black/40 rounded border border-white/5 flex justify-between items-center">
+                        <span className="text-[10px] text-muted-foreground font-mono">Simulated $10 Trade:</span>
+                        <span className={`text-xs font-bold font-mono ${log.simulatedProfit >= 0 ? 'text-primary' : 'text-destructive'}`}>
+                          {log.simulatedProfit >= 0 ? '+' : ''}${log.simulatedProfit.toFixed(2)}
+                        </span>
+                      </div>
+                    )}
 
-                  <p className="text-[10px] text-muted-foreground mt-2 font-mono leading-relaxed border-t border-white/5 pt-1">
-                    <span className="text-white/50">REASON:</span> {log.reason}
-                  </p>
-                </motion.div>
-              ))}
-            </AnimatePresence>
+                    <p className="text-[10px] text-muted-foreground mt-2 font-mono leading-relaxed border-t border-white/5 pt-1">
+                      <span className="text-white/50">REASON:</span> {log.reason}
+                    </p>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </div>
           </div>
+
+          {/* Transactions Panel (Bottom Half) */}
+          <div className="flex-1 flex flex-col bg-black/20 border border-white/10 overflow-hidden">
+            <div className="p-3 border-b border-white/10 bg-black/40 flex items-center justify-between">
+              <h3 className="font-orbitron text-sm text-secondary tracking-widest flex items-center gap-2">
+                <Zap className="w-4 h-4" /> EXECUTED TRADES
+              </h3>
+              <span className="text-[10px] text-muted-foreground font-mono">CONF &gt; 75%</span>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
+              <AnimatePresence initial={false}>
+                {transactions.map((tx) => (
+                  <motion.div
+                    key={tx.id}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-2 rounded border border-white/5 bg-white/5 flex justify-between items-center"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-white font-mono text-sm">{tx.symbol}</span>
+                        <Badge 
+                          variant="outline" 
+                          className={`text-[10px] h-4 px-1 border-0 ${
+                            tx.action === 'BUY' ? 'bg-primary/20 text-primary' : 'bg-destructive/20 text-destructive'
+                          }`}
+                        >
+                          {tx.action}
+                        </Badge>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground font-mono">{tx.time}</span>
+                    </div>
+                    <div className="text-right">
+                      <div className={`text-sm font-bold font-mono ${tx.profit >= 0 ? 'text-primary' : 'text-destructive'}`}>
+                        {tx.profit >= 0 ? '+' : ''}${tx.profit.toFixed(2)}
+                      </div>
+                      <span className="text-[10px] text-muted-foreground font-mono">BAL: ${(100 + tx.profit).toFixed(2)}</span>
+                    </div>
+                  </motion.div>
+                ))}
+                {transactions.length === 0 && (
+                  <div className="text-center text-muted-foreground text-xs py-4 font-mono opacity-50">
+                    WAITING FOR HIGH CONFIDENCE SIGNALS...
+                  </div>
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
+
         </aside>
 
       </main>
