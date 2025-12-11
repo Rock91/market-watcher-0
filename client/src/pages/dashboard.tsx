@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { 
   TrendingUp, 
@@ -10,9 +11,10 @@ import {
   Zap, 
   AlertTriangle, 
   Cpu, 
-  BarChart3,
+  BarChart3, 
   Search,
-  ShieldCheck
+  ShieldCheck,
+  BrainCircuit
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { motion, AnimatePresence } from "framer-motion";
@@ -103,22 +105,55 @@ export default function Dashboard() {
   const [chartData, setChartData] = useState(generateStockData(TOP_GAINERS[0].price));
   const [balance, setBalance] = useState(100);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [aiStrategy, setAiStrategy] = useState("neuro-scalp");
   
   // Use ref to keep track of current balance inside interval closure
   const balanceRef = useRef(balance);
+  const aiStrategyRef = useRef(aiStrategy);
 
   // Sync ref with state
   useEffect(() => {
     balanceRef.current = balance;
   }, [balance]);
 
+  useEffect(() => {
+    aiStrategyRef.current = aiStrategy;
+  }, [aiStrategy]);
+
   // Simulate Bot Activity
   useEffect(() => {
     const interval = setInterval(() => {
       const stockPool = Math.random() > 0.5 ? TOP_GAINERS : TOP_LOSERS;
       const randomStock = stockPool[Math.floor(Math.random() * stockPool.length)];
-      const action = Math.random() > 0.6 ? "BUY" : (Math.random() > 0.5 ? "SELL" : "HOLD");
-      const confidence = Math.floor(Math.random() * 30) + 70; // 70-99%
+      
+      const strategy = aiStrategyRef.current;
+      let action = "HOLD";
+      let confidence = 0;
+      let reason = "";
+
+      // AI Strategy Logic Simulation
+      if (strategy === "neuro-scalp") {
+        // High frequency, lower confidence threshold
+        action = Math.random() > 0.6 ? "BUY" : (Math.random() > 0.5 ? "SELL" : "HOLD");
+        confidence = Math.floor(Math.random() * 20) + 75; // 75-95%
+        reason = action === "BUY" 
+          ? "Micro-structure breakout on 1m timeframe" 
+          : (action === "SELL" ? "Order flow imbalance detected" : "Volatility consolidation");
+      } else if (strategy === "deep-momentum") {
+        // Trend following, higher confidence required
+        action = Math.random() > 0.7 ? "BUY" : (Math.random() > 0.6 ? "SELL" : "HOLD");
+        confidence = Math.floor(Math.random() * 15) + 84; // 84-99%
+        reason = action === "BUY" 
+          ? "Deep Learning Trend Confirmation (Layer 4)" 
+          : (action === "SELL" ? "Trend exhaustion signal via LSTM" : "Awaiting trend confirmation");
+      } else if (strategy === "sentiment-flow") {
+        // Sentiment based
+        action = Math.random() > 0.6 ? "BUY" : (Math.random() > 0.5 ? "SELL" : "HOLD");
+        confidence = Math.floor(Math.random() * 25) + 70; // 70-95%
+        reason = action === "BUY" 
+          ? "Positive social sentiment spike detected" 
+          : (action === "SELL" ? "Negative news catalyst probability > 80%" : "Neutral sentiment baseline");
+      }
       
       // Calculate simulated profit based on confidence and action
       // Higher confidence = slightly higher simulated profit for demo purposes
@@ -147,7 +182,7 @@ export default function Dashboard() {
         action: action as any,
         confidence,
         time: new Date().toLocaleTimeString(),
-        reason: action === "BUY" ? "Momentum breakout detected above MA-50" : (action === "SELL" ? "Resistance level rejected at high volume" : "Consolidating in tight range"),
+        reason,
         simulatedProfit
       };
 
@@ -340,6 +375,26 @@ export default function Dashboard() {
         {/* Right Sidebar - Live Bot Logs & Transactions */}
         <aside className="col-span-3 flex flex-col h-[calc(100vh-7rem)] gap-4">
           
+          {/* AI Strategy Control Panel */}
+          <div className="bg-black/20 border border-white/10 p-3 flex flex-col gap-2">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="font-orbitron text-sm text-white tracking-widest flex items-center gap-2">
+                <BrainCircuit className="w-4 h-4 text-secondary" /> AI STRATEGY
+              </h3>
+              <Badge variant="outline" className="text-[10px] h-4 border-secondary/50 text-secondary bg-secondary/10">ACTIVE</Badge>
+            </div>
+            <Select value={aiStrategy} onValueChange={setAiStrategy}>
+              <SelectTrigger className="w-full bg-black/40 border-white/10 h-8 text-xs font-mono">
+                <SelectValue placeholder="Select Strategy" />
+              </SelectTrigger>
+              <SelectContent className="bg-black/90 border-white/10 text-white">
+                <SelectItem value="neuro-scalp">NEURO-SCALP (High Freq)</SelectItem>
+                <SelectItem value="deep-momentum">DEEP-MOMENTUM (Trend)</SelectItem>
+                <SelectItem value="sentiment-flow">SENTIMENT-FLOW (News)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
           {/* Live Signals Panel (Top Half) */}
           <div className="flex-1 flex flex-col bg-black/20 border border-white/10 overflow-hidden">
             <div className="p-3 border-b border-white/10 bg-black/40 flex items-center justify-between">
