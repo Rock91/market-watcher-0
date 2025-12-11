@@ -42,6 +42,16 @@ const TOP_GAINERS = [
   { symbol: "RIOT", name: "Riot Platforms", price: 12.45, change: "+4.2%", vol: "5M" },
   { symbol: "HOOD", name: "Robinhood", price: 19.80, change: "+3.9%", vol: "6M" },
   { symbol: "DKNG", name: "DraftKings", price: 44.20, change: "+3.5%", vol: "4M" },
+  { symbol: "ARM", name: "Arm Holdings", price: 132.50, change: "+3.2%", vol: "3M" },
+  { symbol: "SMCI", name: "Super Micro", price: 890.10, change: "+2.9%", vol: "2M" },
+  { symbol: "META", name: "Meta Platforms", price: 485.60, change: "+2.5%", vol: "15M" },
+  { symbol: "NET", name: "Cloudflare", price: 92.40, change: "+2.2%", vol: "5M" },
+  { symbol: "UBER", name: "Uber Tech", price: 78.90, change: "+2.0%", vol: "9M" },
+  { symbol: "ABNB", name: "Airbnb Inc", price: 145.20, change: "+1.8%", vol: "4M" },
+  { symbol: "DASH", name: "DoorDash", price: 112.30, change: "+1.5%", vol: "3M" },
+  { symbol: "SHOP", name: "Shopify Inc", price: 76.50, change: "+1.4%", vol: "6M" },
+  { symbol: "SQ", name: "Block Inc", price: 72.80, change: "+1.2%", vol: "5M" },
+  { symbol: "SOFI", name: "SoFi Tech", price: 7.85, change: "+1.0%", vol: "10M" },
 ];
 
 const TOP_LOSERS = [
@@ -55,6 +65,16 @@ const TOP_LOSERS = [
   { symbol: "DIS", name: "Disney", price: 110.40, change: "-2.9%", vol: "15M" },
   { symbol: "PFE", name: "Pfizer", price: 26.80, change: "-2.5%", vol: "18M" },
   { symbol: "XOM", name: "Exxon Mobil", price: 115.20, change: "-2.1%", vol: "14M" },
+  { symbol: "JNJ", name: "Johnson & Johnson", price: 145.60, change: "-1.9%", vol: "8M" },
+  { symbol: "KO", name: "Coca-Cola", price: 58.90, change: "-1.8%", vol: "10M" },
+  { symbol: "PEP", name: "PepsiCo", price: 165.40, change: "-1.7%", vol: "5M" },
+  { symbol: "MCD", name: "McDonald's", price: 278.50, change: "-1.5%", vol: "4M" },
+  { symbol: "SBUX", name: "Starbucks", price: 85.20, change: "-1.4%", vol: "6M" },
+  { symbol: "WMT", name: "Walmart", price: 59.80, change: "-1.2%", vol: "12M" },
+  { symbol: "TGT", name: "Target", price: 135.60, change: "-1.1%", vol: "5M" },
+  { symbol: "COST", name: "Costco", price: 745.20, change: "-1.0%", vol: "3M" },
+  { symbol: "PG", name: "Procter & Gamble", price: 158.40, change: "-0.9%", vol: "4M" },
+  { symbol: "CVX", name: "Chevron", price: 148.90, change: "-0.8%", vol: "7M" },
 ];
 
 interface PredictionLog {
