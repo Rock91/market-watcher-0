@@ -1,0 +1,315 @@
+import { useEffect, useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { 
+  TrendingUp, 
+  TrendingDown, 
+  Activity, 
+  Clock, 
+  Zap, 
+  AlertTriangle, 
+  Cpu, 
+  BarChart3,
+  Search
+} from "lucide-react";
+import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
+import { motion, AnimatePresence } from "framer-motion";
+
+// Mock Data Generators
+const generateStockData = (basePrice: number) => {
+  const data = [];
+  let price = basePrice;
+  for (let i = 0; i < 20; i++) {
+    price = price * (1 + (Math.random() * 0.04 - 0.02));
+    data.push({
+      time: `${9 + Math.floor(i/2)}:${i % 2 === 0 ? '00' : '30'}`,
+      price: price
+    });
+  }
+  return data;
+};
+
+// Mock Gainers/Losers
+const TOP_GAINERS = [
+  { symbol: "NVDA", name: "NVIDIA Corp", price: 145.32, change: "+12.4%", vol: "45M" },
+  { symbol: "AMD", name: "Adv Micro Dev", price: 178.90, change: "+8.2%", vol: "22M" },
+  { symbol: "PLTR", name: "Palantir Tech", price: 24.50, change: "+7.8%", vol: "18M" },
+  { symbol: "COIN", name: "Coinbase Global", price: 265.12, change: "+6.5%", vol: "12M" },
+  { symbol: "TSLA", name: "Tesla Inc", price: 180.45, change: "+5.9%", vol: "35M" },
+  { symbol: "MARA", name: "Marathon Digital", price: 22.30, change: "+5.4%", vol: "8M" },
+  { symbol: "MSTR", name: "MicroStrategy", price: 1650.00, change: "+4.8%", vol: "1.2M" },
+  { symbol: "RIOT", name: "Riot Platforms", price: 12.45, change: "+4.2%", vol: "5M" },
+  { symbol: "HOOD", name: "Robinhood", price: 19.80, change: "+3.9%", vol: "6M" },
+  { symbol: "DKNG", name: "DraftKings", price: 44.20, change: "+3.5%", vol: "4M" },
+];
+
+const TOP_LOSERS = [
+  { symbol: "INTC", name: "Intel Corp", price: 30.12, change: "-8.4%", vol: "30M" },
+  { symbol: "WBA", name: "Walgreens Boots", price: 18.45, change: "-7.2%", vol: "10M" },
+  { symbol: "LULU", name: "Lululemon", price: 290.50, change: "-6.8%", vol: "5M" },
+  { symbol: "NKE", name: "Nike Inc", price: 92.30, change: "-5.5%", vol: "12M" },
+  { symbol: "BA", name: "Boeing Co", price: 175.60, change: "-4.9%", vol: "8M" },
+  { symbol: "T", name: "AT&T Inc", price: 16.20, change: "-3.8%", vol: "25M" },
+  { symbol: "VZ", name: "Verizon", price: 38.90, change: "-3.2%", vol: "20M" },
+  { symbol: "DIS", name: "Disney", price: 110.40, change: "-2.9%", vol: "15M" },
+  { symbol: "PFE", name: "Pfizer", price: 26.80, change: "-2.5%", vol: "18M" },
+  { symbol: "XOM", name: "Exxon Mobil", price: 115.20, change: "-2.1%", vol: "14M" },
+];
+
+interface PredictionLog {
+  id: number;
+  symbol: string;
+  action: "BUY" | "SELL" | "HOLD";
+  confidence: number;
+  time: string;
+  reason: string;
+}
+
+export default function Dashboard() {
+  const [logs, setLogs] = useState<PredictionLog[]>([]);
+  const [selectedStock, setSelectedStock] = useState(TOP_GAINERS[0]);
+  const [chartData, setChartData] = useState(generateStockData(TOP_GAINERS[0].price));
+
+  // Simulate Bot Activity
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const stockPool = Math.random() > 0.5 ? TOP_GAINERS : TOP_LOSERS;
+      const randomStock = stockPool[Math.floor(Math.random() * stockPool.length)];
+      const action = Math.random() > 0.6 ? "BUY" : (Math.random() > 0.5 ? "SELL" : "HOLD");
+      const confidence = Math.floor(Math.random() * 30) + 70; // 70-99%
+      
+      const newLog: PredictionLog = {
+        id: Date.now(),
+        symbol: randomStock.symbol,
+        action: action as any,
+        confidence,
+        time: new Date().toLocaleTimeString(),
+        reason: action === "BUY" ? "Momentum breakout detected" : (action === "SELL" ? "Resistance level hit" : "Consolidating")
+      };
+
+      setLogs(prev => [newLog, ...prev].slice(0, 50));
+    }, 3000); // New prediction every 3 seconds for demo (user asked for 5 min)
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // Update chart when stock changes
+  useEffect(() => {
+    setChartData(generateStockData(selectedStock.price));
+  }, [selectedStock]);
+
+  return (
+    <div className="min-h-screen bg-background text-foreground flex flex-col overflow-hidden">
+      {/* Header */}
+      <header className="border-b border-white/10 bg-black/40 backdrop-blur-md h-16 flex items-center px-6 justify-between sticky top-0 z-50">
+        <div className="flex items-center gap-2">
+          <Cpu className="w-6 h-6 text-primary animate-pulse" />
+          <h1 className="text-xl font-bold tracking-widest text-primary font-orbitron">QUANTUM<span className="text-white">TRADE</span></h1>
+          <Badge variant="outline" className="ml-4 border-primary/50 text-primary bg-primary/10 font-mono text-xs">
+            v2.4.0 ONLINE
+          </Badge>
+        </div>
+        <div className="flex items-center gap-6 text-sm font-rajdhani font-medium text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-primary" />
+            <span>Market: <span className="text-white">OPEN</span></span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Zap className="w-4 h-4 text-yellow-500" />
+            <span>Latency: <span className="text-white">12ms</span></span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Activity className="w-4 h-4 text-green-500" />
+            <span>Bot Status: <span className="text-green-400 animate-pulse">ACTIVE</span></span>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-1 p-6 grid grid-cols-12 gap-6 overflow-hidden">
+        
+        {/* Left Sidebar - Watchlists */}
+        <aside className="col-span-3 flex flex-col gap-6 h-[calc(100vh-7rem)]">
+          <Tabs defaultValue="gainers" className="w-full flex-1 flex flex-col">
+            <TabsList className="w-full grid grid-cols-2 bg-black/20 border border-white/10 rounded-none mb-4">
+              <TabsTrigger value="gainers" className="rounded-none data-[state=active]:bg-primary/20 data-[state=active]:text-primary font-orbitron text-xs">TOP GAINERS</TabsTrigger>
+              <TabsTrigger value="losers" className="rounded-none data-[state=active]:bg-destructive/20 data-[state=active]:text-destructive font-orbitron text-xs">TOP LOSERS</TabsTrigger>
+            </TabsList>
+            
+            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+              <TabsContent value="gainers" className="mt-0 space-y-2">
+                {TOP_GAINERS.map((stock) => (
+                  <StockCard 
+                    key={stock.symbol} 
+                    stock={stock} 
+                    isSelected={selectedStock.symbol === stock.symbol}
+                    onClick={() => setSelectedStock(stock)}
+                    type="gainer"
+                  />
+                ))}
+              </TabsContent>
+              <TabsContent value="losers" className="mt-0 space-y-2">
+                {TOP_LOSERS.map((stock) => (
+                  <StockCard 
+                    key={stock.symbol} 
+                    stock={stock} 
+                    isSelected={selectedStock.symbol === stock.symbol}
+                    onClick={() => setSelectedStock(stock)}
+                    type="loser"
+                  />
+                ))}
+              </TabsContent>
+            </div>
+          </Tabs>
+        </aside>
+
+        {/* Center - Charts & Analysis */}
+        <section className="col-span-6 flex flex-col gap-6 h-[calc(100vh-7rem)]">
+          {/* Main Chart Card */}
+          <Card className="flex-1 bg-black/40 border-white/10 backdrop-blur-sm relative overflow-hidden group">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-primary to-transparent opacity-50" />
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <div>
+                <CardTitle className="text-3xl font-orbitron tracking-wider text-white flex items-baseline gap-3">
+                  {selectedStock.symbol}
+                  <span className={`text-lg font-rajdhani ${selectedStock.change.startsWith('+') ? 'text-primary' : 'text-destructive'}`}>
+                    {selectedStock.price.toFixed(2)}
+                  </span>
+                </CardTitle>
+                <p className="text-muted-foreground text-xs font-rajdhani uppercase tracking-widest mt-1">{selectedStock.name} // VOL: {selectedStock.vol}</p>
+              </div>
+              <Badge variant="outline" className={`font-mono text-lg px-4 py-1 ${selectedStock.change.startsWith('+') ? 'border-primary text-primary bg-primary/10' : 'border-destructive text-destructive bg-destructive/10'}`}>
+                {selectedStock.change}
+              </Badge>
+            </CardHeader>
+            <CardContent className="h-[calc(100%-80px)] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData}>
+                  <defs>
+                    <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={selectedStock.change.startsWith('+') ? "var(--color-primary)" : "var(--color-destructive)"} stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor={selectedStock.change.startsWith('+') ? "var(--color-primary)" : "var(--color-destructive)"} stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+                  <XAxis dataKey="time" stroke="#666" fontSize={12} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#666" fontSize={12} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#000', borderColor: '#333', color: '#fff' }}
+                    itemStyle={{ color: '#fff' }}
+                  />
+                  <Area 
+                    type="monotone" 
+                    dataKey="price" 
+                    stroke={selectedStock.change.startsWith('+') ? "var(--color-primary)" : "var(--color-destructive)"} 
+                    strokeWidth={2}
+                    fillOpacity={1} 
+                    fill="url(#colorPrice)" 
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          {/* Quick Stats Grid */}
+          <div className="grid grid-cols-3 gap-4 h-32">
+             <StatCard title="RSI (14)" value="68.4" status="neutral" />
+             <StatCard title="MACD" value="+0.45" status="positive" />
+             <StatCard title="VOLATILITY" value="High" status="warning" />
+          </div>
+        </section>
+
+        {/* Right Sidebar - Live Bot Logs */}
+        <aside className="col-span-3 flex flex-col h-[calc(100vh-7rem)] bg-black/20 border border-white/10">
+          <div className="p-3 border-b border-white/10 bg-black/40 flex items-center justify-between">
+            <h3 className="font-orbitron text-sm text-primary tracking-widest flex items-center gap-2">
+              <Activity className="w-4 h-4" /> LIVE SIGNALS
+            </h3>
+            <span className="text-[10px] text-muted-foreground font-mono animate-pulse">UPDATING...</span>
+          </div>
+          <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
+            <AnimatePresence initial={false}>
+              {logs.map((log) => (
+                <motion.div
+                  key={log.id}
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="p-3 rounded border border-white/5 bg-white/5 hover:bg-white/10 transition-colors"
+                >
+                  <div className="flex justify-between items-start mb-1">
+                    <span className="font-bold text-white font-mono">{log.symbol}</span>
+                    <span className="text-[10px] text-muted-foreground">{log.time}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Badge 
+                      variant="outline" 
+                      className={`text-[10px] h-5 px-1 border-0 ${
+                        log.action === 'BUY' ? 'bg-primary/20 text-primary' : 
+                        log.action === 'SELL' ? 'bg-destructive/20 text-destructive' : 
+                        'bg-white/10 text-white'
+                      }`}
+                    >
+                      {log.action}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground font-mono">{log.confidence}% CONF</span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-2 font-mono truncate">
+                    &gt; {log.reason}
+                  </p>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+        </aside>
+
+      </main>
+    </div>
+  );
+}
+
+function StockCard({ stock, isSelected, onClick, type }: { stock: any, isSelected: boolean, onClick: () => void, type: 'gainer' | 'loser' }) {
+  return (
+    <div 
+      onClick={onClick}
+      className={`
+        p-3 rounded cursor-pointer transition-all duration-200 border-l-2
+        ${isSelected 
+          ? 'bg-white/10 border-l-primary' 
+          : 'bg-black/20 border-l-transparent hover:bg-white/5'
+        }
+      `}
+    >
+      <div className="flex justify-between items-center">
+        <div>
+          <h4 className="font-bold text-sm text-white font-mono">{stock.symbol}</h4>
+          <p className="text-[10px] text-muted-foreground truncate max-w-[100px]">{stock.name}</p>
+        </div>
+        <div className="text-right">
+          <p className={`text-sm font-bold font-mono ${type === 'gainer' ? 'text-primary' : 'text-destructive'}`}>
+            {stock.change}
+          </p>
+          <p className="text-[10px] text-muted-foreground">{stock.price}</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function StatCard({ title, value, status }: { title: string, value: string, status: 'positive' | 'negative' | 'neutral' | 'warning' }) {
+  const getColor = () => {
+    switch(status) {
+      case 'positive': return 'text-primary';
+      case 'negative': return 'text-destructive';
+      case 'warning': return 'text-yellow-500';
+      default: return 'text-white';
+    }
+  }
+
+  return (
+    <div className="bg-black/40 border border-white/10 p-3 flex flex-col justify-center items-center backdrop-blur-sm">
+      <span className="text-[10px] text-muted-foreground font-orbitron tracking-widest mb-1">{title}</span>
+      <span className={`text-xl font-bold font-mono ${getColor()}`}>{value}</span>
+    </div>
+  )
+}
