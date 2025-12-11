@@ -133,6 +133,42 @@ export default function Dashboard() {
     setChartData(generateStockData(selectedStock.price));
   }, [selectedStock]);
 
+  // Simulate live chart movement
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setChartData(currentData => {
+        const newData = [...currentData];
+        const lastPoint = newData[newData.length - 1];
+        
+        // Remove first point to keep window fixed size
+        newData.shift();
+        
+        // Generate next price point
+        const volatility = 0.005; // 0.5% volatility
+        const change = 1 + (Math.random() * volatility * 2 - volatility);
+        const newPrice = lastPoint.price * change;
+        
+        // Calculate new time label
+        const lastTime = lastPoint.time.split(':');
+        let hours = parseInt(lastTime[0]);
+        let minutes = parseInt(lastTime[1]) + 5; // 5 minute intervals as requested originally, but updating faster for visual effect
+        if (minutes >= 60) {
+          hours += 1;
+          minutes = 0;
+        }
+        
+        newData.push({
+          time: `${hours}:${minutes.toString().padStart(2, '0')}`,
+          price: newPrice
+        });
+        
+        return newData;
+      });
+    }, 1000); // Update chart every 1 second
+
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col overflow-hidden">
       {/* Header */}
