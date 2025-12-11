@@ -64,6 +64,7 @@ interface PredictionLog {
   confidence: number;
   time: string;
   reason: string;
+  simulatedProfit: number; // Potential profit on $10
 }
 
 export default function Dashboard() {
@@ -79,13 +80,26 @@ export default function Dashboard() {
       const action = Math.random() > 0.6 ? "BUY" : (Math.random() > 0.5 ? "SELL" : "HOLD");
       const confidence = Math.floor(Math.random() * 30) + 70; // 70-99%
       
+      // Calculate simulated profit based on confidence and action
+      // Higher confidence = slightly higher simulated profit for demo purposes
+      // Base random movement between -2% to +5%
+      let profitPercent = (Math.random() * 7 - 2) / 100;
+      
+      // If action is SELL and we "shorted", profit is inverse of price movement
+      if (action === "SELL") profitPercent = profitPercent * -1;
+      if (action === "HOLD") profitPercent = 0;
+
+      const investment = 10;
+      const simulatedProfit = investment * profitPercent;
+
       const newLog: PredictionLog = {
         id: Date.now(),
         symbol: randomStock.symbol,
         action: action as any,
         confidence,
         time: new Date().toLocaleTimeString(),
-        reason: action === "BUY" ? "Momentum breakout detected" : (action === "SELL" ? "Resistance level hit" : "Consolidating")
+        reason: action === "BUY" ? "Momentum breakout detected above MA-50" : (action === "SELL" ? "Resistance level rejected at high volume" : "Consolidating in tight range"),
+        simulatedProfit
       };
 
       setLogs(prev => [newLog, ...prev].slice(0, 50));
@@ -252,10 +266,23 @@ export default function Dashboard() {
                     >
                       {log.action}
                     </Badge>
-                    <span className="text-xs text-muted-foreground font-mono">{log.confidence}% CONF</span>
+                    <span className={`text-xs font-mono font-bold ${log.confidence > 85 ? 'text-green-400' : 'text-yellow-400'}`}>
+                      {log.confidence}% CONF
+                    </span>
                   </div>
-                  <p className="text-[10px] text-muted-foreground mt-2 font-mono truncate">
-                    &gt; {log.reason}
+                  
+                  {/* Simulated Profit Section */}
+                  {log.action !== 'HOLD' && (
+                    <div className="mt-2 p-2 bg-black/40 rounded border border-white/5 flex justify-between items-center">
+                      <span className="text-[10px] text-muted-foreground font-mono">Simulated $10 Trade:</span>
+                      <span className={`text-xs font-bold font-mono ${log.simulatedProfit >= 0 ? 'text-primary' : 'text-destructive'}`}>
+                        {log.simulatedProfit >= 0 ? '+' : ''}${log.simulatedProfit.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-muted-foreground mt-2 font-mono leading-relaxed border-t border-white/5 pt-1">
+                    <span className="text-white/50">REASON:</span> {log.reason}
                   </p>
                 </motion.div>
               ))}
