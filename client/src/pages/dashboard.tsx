@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +11,8 @@ import {
   AlertTriangle, 
   Cpu, 
   BarChart3,
-  Search
+  Search,
+  ShieldCheck
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { motion, AnimatePresence } from "framer-motion";
@@ -102,6 +103,14 @@ export default function Dashboard() {
   const [chartData, setChartData] = useState(generateStockData(TOP_GAINERS[0].price));
   const [balance, setBalance] = useState(100);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  
+  // Use ref to keep track of current balance inside interval closure
+  const balanceRef = useRef(balance);
+
+  // Sync ref with state
+  useEffect(() => {
+    balanceRef.current = balance;
+  }, [balance]);
 
   // Simulate Bot Activity
   useEffect(() => {
@@ -120,7 +129,9 @@ export default function Dashboard() {
       if (action === "SELL") profitPercent = profitPercent * -1;
       if (action === "HOLD") profitPercent = 0;
 
-      const investment = 10;
+      // RISK MANAGEMENT: 1% of current balance
+      const currentBalance = balanceRef.current;
+      const investment = currentBalance * 0.01;
       const simulatedProfit = investment * profitPercent;
 
       const newLog: PredictionLog = {
@@ -210,6 +221,10 @@ export default function Dashboard() {
           <div className="flex items-center gap-2">
             <Clock className="w-4 h-4 text-primary" />
             <span>Market: <span className="text-white">OPEN</span></span>
+          </div>
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-primary" />
+            <span>Risk: <span className="text-white">1%</span></span>
           </div>
           <div className="flex items-center gap-2">
             <Zap className="w-4 h-4 text-yellow-500" />
@@ -359,7 +374,7 @@ export default function Dashboard() {
                     {/* Simulated Profit Section */}
                     {log.action !== 'HOLD' && (
                       <div className="mt-2 p-2 bg-black/40 rounded border border-white/5 flex justify-between items-center">
-                        <span className="text-[10px] text-muted-foreground font-mono">Simulated $10 Trade:</span>
+                        <span className="text-[10px] text-muted-foreground font-mono">Simulated 1% Trade:</span>
                         <span className={`text-xs font-bold font-mono ${log.simulatedProfit >= 0 ? 'text-primary' : 'text-destructive'}`}>
                           {log.simulatedProfit >= 0 ? '+' : ''}${log.simulatedProfit.toFixed(2)}
                         </span>
