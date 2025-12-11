@@ -129,9 +129,16 @@ export default function Dashboard() {
       if (action === "SELL") profitPercent = profitPercent * -1;
       if (action === "HOLD") profitPercent = 0;
 
-      // RISK MANAGEMENT: 1% of current balance
+      // RISK MANAGEMENT: Dynamic based on confidence
+      // > 90% confidence = 2.5% risk
+      // > 80% confidence = 1.5% risk
+      // < 80% confidence = 1.0% risk
+      let riskPercent = 0.01;
+      if (confidence > 90) riskPercent = 0.025;
+      else if (confidence > 80) riskPercent = 0.015;
+
       const currentBalance = balanceRef.current;
-      const investment = currentBalance * 0.01;
+      const investment = currentBalance * riskPercent;
       const simulatedProfit = investment * profitPercent;
 
       const newLog: PredictionLog = {
@@ -224,7 +231,7 @@ export default function Dashboard() {
           </div>
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-4 h-4 text-primary" />
-            <span>Risk: <span className="text-white">1%</span></span>
+            <span>Risk: <span className="text-white">AUTO (1-2.5%)</span></span>
           </div>
           <div className="flex items-center gap-2">
             <Zap className="w-4 h-4 text-yellow-500" />
@@ -374,7 +381,9 @@ export default function Dashboard() {
                     {/* Simulated Profit Section */}
                     {log.action !== 'HOLD' && (
                       <div className="mt-2 p-2 bg-black/40 rounded border border-white/5 flex justify-between items-center">
-                        <span className="text-[10px] text-muted-foreground font-mono">Simulated 1% Trade:</span>
+                        <span className="text-[10px] text-muted-foreground font-mono">
+                          Risk {(log.confidence > 90 ? 2.5 : log.confidence > 80 ? 1.5 : 1.0)}%:
+                        </span>
                         <span className={`text-xs font-bold font-mono ${log.simulatedProfit >= 0 ? 'text-primary' : 'text-destructive'}`}>
                           {log.simulatedProfit >= 0 ? '+' : ''}${log.simulatedProfit.toFixed(2)}
                         </span>
