@@ -217,91 +217,143 @@ export default function Dashboard() {
     loadChartData();
   }, [selectedStock]);
 
-  // Simulate Bot Activity
+  // Simulate Bot Activity with Advanced AI
   useEffect(() => {
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
       if (topGainers.length === 0 && topLosers.length === 0) return;
 
       const stockPool = Math.random() > 0.5 ? topGainers : topLosers;
       const randomStock = stockPool[Math.floor(Math.random() * stockPool.length)];
 
-      const strategy = aiStrategyRef.current;
-      let action = "HOLD";
-      let confidence = 0;
-      let reason = "";
+      try {
+        // Get real market data for AI analysis
+        const historicalData = await fetchHistoricalData(randomStock.symbol, 1); // 1 day of data
+        const currentPrice = randomStock.price;
+        const historicalPrices = historicalData.map((d: any) => d.price);
 
-      // AI Strategy Logic Simulation
-      if (strategy === "neuro-scalp") {
-        // High frequency, lower confidence threshold
-        action = Math.random() > 0.6 ? "BUY" : (Math.random() > 0.5 ? "SELL" : "HOLD");
-        confidence = Math.floor(Math.random() * 20) + 75; // 75-95%
-        reason = action === "BUY"
-          ? "Micro-structure breakout on 1m timeframe"
-          : (action === "SELL" ? "Order flow imbalance detected" : "Volatility consolidation");
-      } else if (strategy === "deep-momentum") {
-        // Trend following, higher confidence required
-        action = Math.random() > 0.7 ? "BUY" : (Math.random() > 0.6 ? "SELL" : "HOLD");
-        confidence = Math.floor(Math.random() * 15) + 84; // 84-99%
-        reason = action === "BUY"
-          ? "Deep Learning Trend Confirmation (Layer 4)"
-          : (action === "SELL" ? "Trend exhaustion signal via LSTM" : "Awaiting trend confirmation");
-      } else if (strategy === "sentiment-flow") {
-        // Sentiment based
-        action = Math.random() > 0.6 ? "BUY" : (Math.random() > 0.5 ? "SELL" : "HOLD");
-        confidence = Math.floor(Math.random() * 25) + 70; // 70-95%
-        reason = action === "BUY"
-          ? "Positive social sentiment spike detected"
-          : (action === "SELL" ? "Negative news catalyst probability > 80%" : "Neutral sentiment baseline");
-      }
+        // Generate AI signal using advanced strategies via API
+        const response = await fetch('/api/ai/signal', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            symbol: randomStock.symbol,
+            price: currentPrice,
+            volume: parseInt(randomStock.vol.replace('M', '')) * 1000000,
+            historicalPrices,
+            strategy: aiStrategyRef.current,
+            sentimentScore: (Math.random() - 0.5) * 2 // Mock sentiment score
+          })
+        });
 
-      // Calculate simulated profit based on confidence and action
-      // Higher confidence = slightly higher simulated profit for demo purposes
-      // Base random movement between -2% to +5%
-      let profitPercent = (Math.random() * 7 - 2) / 100;
+        if (!response.ok) {
+          throw new Error('Failed to generate AI signal');
+        }
 
-      // If action is SELL and we "shorted", profit is inverse of price movement
-      if (action === "SELL") profitPercent = profitPercent * -1;
-      if (action === "HOLD") profitPercent = 0;
+        const signal = await response.json();
+        const { action, confidence, reason } = signal;
 
-      // RISK MANAGEMENT: Dynamic based on confidence
-      // > 90% confidence = 2.5% risk
-      // > 80% confidence = 1.5% risk
-      // < 80% confidence = 1.0% risk
-      let riskPercent = 0.01;
-      if (confidence > 90) riskPercent = 0.025;
-      else if (confidence > 80) riskPercent = 0.015;
+        // Calculate simulated profit based on confidence and action
+        let profitPercent = (Math.random() * 7 - 2) / 100;
 
-      const currentBalance = balanceRef.current;
-      const investment = currentBalance * riskPercent;
-      const simulatedProfit = investment * profitPercent;
+        if (action === "SELL") profitPercent = profitPercent * -1;
+        if (action === "HOLD") profitPercent = 0;
 
-      const newLog: PredictionLog = {
-        id: Date.now(),
-        symbol: randomStock.symbol,
-        action: action as any,
-        confidence,
-        time: new Date().toLocaleTimeString(),
-        reason,
-        simulatedProfit
-      };
+        // RISK MANAGEMENT: Dynamic based on confidence
+        let riskPercent = 0.01;
+        if (confidence > 90) riskPercent = 0.025;
+        else if (confidence > 80) riskPercent = 0.015;
 
-      setLogs(prev => [newLog, ...prev].slice(0, 50));
+        const currentBalance = balanceRef.current;
+        const investment = currentBalance * riskPercent;
+        const simulatedProfit = investment * profitPercent;
 
-      // AUTO-TRADE LOGIC: If confidence > 75%, execute trade
-      if (confidence > 75 && action !== "HOLD") {
-        setBalance(prev => prev + simulatedProfit);
-        const newTransaction: Transaction = {
+        const newLog: PredictionLog = {
           id: Date.now(),
           symbol: randomStock.symbol,
-          action: action as "BUY" | "SELL",
-          amount: investment,
-          profit: simulatedProfit,
-          time: new Date().toLocaleTimeString()
+          action: action as any,
+          confidence,
+          time: new Date().toLocaleTimeString(),
+          reason,
+          simulatedProfit
         };
-        setTransactions(prev => [newTransaction, ...prev].slice(0, 50));
-      }
 
-    }, 3000); // New prediction every 3 seconds for demo
+        setLogs(prev => [newLog, ...prev].slice(0, 50));
+
+        // AUTO-TRADE LOGIC: If confidence > 75%, execute trade
+        if (confidence > 75 && action !== "HOLD") {
+          setBalance(prev => prev + simulatedProfit);
+          const newTransaction: Transaction = {
+            id: Date.now(),
+            symbol: randomStock.symbol,
+            action: action as "BUY" | "SELL",
+            amount: investment,
+            profit: simulatedProfit,
+            time: new Date().toLocaleTimeString()
+          };
+          setTransactions(prev => [newTransaction, ...prev].slice(0, 50));
+        }
+      } catch (error) {
+        console.error('AI signal generation error:', error);
+        // Fallback to simple random logic
+        const strategy = aiStrategyRef.current;
+        let action = "HOLD";
+        let confidence = 0;
+        let reason = "";
+
+        if (strategy === "neuro-scalp") {
+          action = Math.random() > 0.6 ? "BUY" : (Math.random() > 0.5 ? "SELL" : "HOLD");
+          confidence = Math.floor(Math.random() * 20) + 75;
+          reason = "Fallback: Micro-structure analysis";
+        } else if (strategy === "deep-momentum") {
+          action = Math.random() > 0.7 ? "BUY" : (Math.random() > 0.6 ? "SELL" : "HOLD");
+          confidence = Math.floor(Math.random() * 15) + 84;
+          reason = "Fallback: Trend momentum analysis";
+        } else if (strategy === "sentiment-flow") {
+          action = Math.random() > 0.6 ? "BUY" : (Math.random() > 0.5 ? "SELL" : "HOLD");
+          confidence = Math.floor(Math.random() * 25) + 70;
+          reason = "Fallback: Sentiment flow analysis";
+        }
+
+        let profitPercent = (Math.random() * 7 - 2) / 100;
+        if (action === "SELL") profitPercent = profitPercent * -1;
+        if (action === "HOLD") profitPercent = 0;
+
+        let riskPercent = 0.01;
+        if (confidence > 90) riskPercent = 0.025;
+        else if (confidence > 80) riskPercent = 0.015;
+
+        const currentBalance = balanceRef.current;
+        const investment = currentBalance * riskPercent;
+        const simulatedProfit = investment * profitPercent;
+
+        const newLog: PredictionLog = {
+          id: Date.now(),
+          symbol: randomStock.symbol,
+          action: action as any,
+          confidence,
+          time: new Date().toLocaleTimeString(),
+          reason,
+          simulatedProfit
+        };
+
+        setLogs(prev => [newLog, ...prev].slice(0, 50));
+
+        if (confidence > 75 && action !== "HOLD") {
+          setBalance(prev => prev + simulatedProfit);
+          const newTransaction: Transaction = {
+            id: Date.now(),
+            symbol: randomStock.symbol,
+            action: action as "BUY" | "SELL",
+            amount: investment,
+            profit: simulatedProfit,
+            time: new Date().toLocaleTimeString()
+          };
+          setTransactions(prev => [newTransaction, ...prev].slice(0, 50));
+        }
+      }
+    }, 3000); // New prediction every 3 seconds
 
     return () => clearInterval(interval);
   }, [topGainers, topLosers]);

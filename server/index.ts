@@ -1,10 +1,83 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
+import { registerAuthRoutes, setupAuth } from "./auth";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { WebSocketServer, WebSocket } from "ws";
 
 const app = express();
 const httpServer = createServer(app);
+
+// Setup authentication
+setupAuth(app);
+
+// WebSocket server for real-time updates
+const wss = new WebSocketServer({ server: httpServer });
+const clients = new Set<WebSocket>();
+
+wss.on('connection', (ws: WebSocket) => {
+  console.log('Client connected');
+  clients.add(ws);
+
+  ws.on('message', (message) => {
+    try {
+      const data = JSON.parse(message.toString());
+      if (data.type === 'subscribe' && data.symbols) {
+        ws.symbols = data.symbols;
+        console.log(`Client subscribed to: ${data.symbols.join(', ')}`);
+      }
+    } catch (error) {
+      console.error('WebSocket message error:', error);
+    }
+  });
+
+  ws.on('close', () => {
+    console.log('Client disconnected');
+    clients.delete(ws);
+  });
+
+  ws.on('error', (error) => {
+    console.error('WebSocket error:', error);
+    clients.delete(ws);
+  });
+});
+
+// Broadcast real-time price updates
+setInterval(async () => {
+  if (clients.size === 0) return;
+
+  try {
+    // Get popular symbols for updates
+    const popularSymbols = ['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'NVDA', 'AMZN'];
+
+    for (const symbol of popularSymbols) {
+      try {
+        const quote = await yahooFinance.quote(symbol);
+        const update = {
+          type: 'price_update',
+          symbol: quote.symbol,
+          price: quote.regularMarketPrice,
+          change: quote.regularMarketChange,
+          changePercent: quote.regularMarketChangePercent,
+          volume: quote.regularMarketVolume,
+          timestamp: Date.now()
+        };
+
+        // Send to all clients subscribed to this symbol
+        clients.forEach(client => {
+          if (client.readyState === WebSocket.OPEN &&
+              (!client.symbols || client.symbols.includes(symbol))) {
+            client.send(JSON.stringify(update));
+          }
+        });
+      } catch (error) {
+        console.error(`Error updating ${symbol}:`, error);
+      }
+    }
+  } catch (error) {
+    console.error('Error in price update broadcast:', error);
+  }
+}, 5000); // Update every 5 seconds
 
 declare module "http" {
   interface IncomingMessage {
@@ -61,6 +134,7 @@ app.use((req, res, next) => {
 
 (async () => {
   await registerRoutes(httpServer, app);
+  registerAuthRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
@@ -88,8 +162,7 @@ app.use((req, res, next) => {
   httpServer.listen(
     {
       port,
-      host: "0.0.0.0",
-      reusePort: true,
+      host: "localhost",
     },
     () => {
       log(`serving on port ${port}`);
