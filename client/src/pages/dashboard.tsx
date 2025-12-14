@@ -3,21 +3,22 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { 
-  TrendingUp, 
-  TrendingDown, 
-  Activity, 
-  Clock, 
-  Zap, 
-  AlertTriangle, 
-  Cpu, 
-  BarChart3, 
+import {
+  TrendingUp,
+  TrendingDown,
+  Activity,
+  Clock,
+  Zap,
+  AlertTriangle,
+  Cpu,
+  BarChart3,
   Search,
   ShieldCheck,
   BrainCircuit
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { motion, AnimatePresence } from "framer-motion";
+import { fetchStockQuote, fetchHistoricalData, fetchMarketMovers, type StockQuote } from "@/lib/api";
 
 // Mock Data Generators
 const generateStockData = (basePrice: number) => {
@@ -99,14 +100,26 @@ interface Transaction {
   time: string;
 }
 
+interface Stock {
+  symbol: string;
+  name: string;
+  price: number;
+  change: string;
+  vol: string;
+}
+
 export default function Dashboard() {
   const [logs, setLogs] = useState<PredictionLog[]>([]);
-  const [selectedStock, setSelectedStock] = useState(TOP_GAINERS[0]);
-  const [chartData, setChartData] = useState(generateStockData(TOP_GAINERS[0].price));
+  const [selectedStock, setSelectedStock] = useState<StockQuote | null>(null);
+  const [chartData, setChartData] = useState<any[]>([]);
   const [balance, setBalance] = useState(100);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [aiStrategy, setAiStrategy] = useState("neuro-scalp");
-  
+  const [topGainers, setTopGainers] = useState<StockQuote[]>([]);
+  const [topLosers, setTopLosers] = useState<StockQuote[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
   // Use ref to keep track of current balance inside interval closure
   const balanceRef = useRef(balance);
   const aiStrategyRef = useRef(aiStrategy);
@@ -120,12 +133,98 @@ export default function Dashboard() {
     aiStrategyRef.current = aiStrategy;
   }, [aiStrategy]);
 
+  // Load initial market data
+  useEffect(() => {
+    const loadInitialData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const [gainers, losers] = await Promise.all([
+          fetchMarketMovers('gainers', 20),
+          fetchMarketMovers('losers', 20)
+        ]);
+
+        setTopGainers(gainers);
+        setTopLosers(losers);
+
+        // Set initial selected stock
+        if (gainers.length > 0) {
+          setSelectedStock(gainers[0]);
+        }
+      } catch (err) {
+        console.error('Error loading initial data:', err);
+        setError('Failed to load market data. Using demo mode.');
+        // Fallback to mock data if API fails
+        setTopGainers([
+          { symbol: "NVDA", name: "NVIDIA Corp", price: 145.32, change: "+12.4%", vol: "45M" },
+          { symbol: "AMD", name: "Adv Micro Dev", price: 178.90, change: "+8.2%", vol: "22M" },
+          { symbol: "PLTR", name: "Palantir Tech", price: 24.50, change: "+7.8%", vol: "18M" },
+        ]);
+        setTopLosers([
+          { symbol: "INTC", name: "Intel Corp", price: 30.12, change: "-8.4%", vol: "30M" },
+          { symbol: "WBA", name: "Walgreens Boots", price: 18.45, change: "-7.2%", vol: "10M" },
+        ]);
+        if (!selectedStock) {
+          setSelectedStock({ symbol: "NVDA", name: "NVIDIA Corp", price: 145.32, change: "+12.4%", vol: "45M" });
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadInitialData();
+  }, []);
+
+  // Update chart when stock changes
+  useEffect(() => {
+    const loadChartData = async () => {
+      if (!selectedStock) return;
+
+      try {
+        const historicalData = await fetchHistoricalData(selectedStock.symbol, 1); // 1 day of 5-minute data
+        if (historicalData.length > 0) {
+          setChartData(historicalData);
+        } else {
+          // Fallback to generated data if no historical data
+          const generatedData = [];
+          let price = selectedStock.price;
+          for (let i = 0; i < 20; i++) {
+            price = price * (1 + (Math.random() * 0.04 - 0.02));
+            generatedData.push({
+              time: `${9 + Math.floor(i/2)}:${i % 2 === 0 ? '00' : '30'}`,
+              price: price
+            });
+          }
+          setChartData(generatedData);
+        }
+      } catch (err) {
+        console.error('Error loading chart data:', err);
+        // Fallback to generated data
+        const generatedData = [];
+        let price = selectedStock.price;
+        for (let i = 0; i < 20; i++) {
+          price = price * (1 + (Math.random() * 0.04 - 0.02));
+          generatedData.push({
+            time: `${9 + Math.floor(i/2)}:${i % 2 === 0 ? '00' : '30'}`,
+            price: price
+          });
+        }
+        setChartData(generatedData);
+      }
+    };
+
+    loadChartData();
+  }, [selectedStock]);
+
   // Simulate Bot Activity
   useEffect(() => {
     const interval = setInterval(() => {
-      const stockPool = Math.random() > 0.5 ? TOP_GAINERS : TOP_LOSERS;
+      if (topGainers.length === 0 && topLosers.length === 0) return;
+
+      const stockPool = Math.random() > 0.5 ? topGainers : topLosers;
       const randomStock = stockPool[Math.floor(Math.random() * stockPool.length)];
-      
+
       const strategy = aiStrategyRef.current;
       let action = "HOLD";
       let confidence = 0;
@@ -136,30 +235,30 @@ export default function Dashboard() {
         // High frequency, lower confidence threshold
         action = Math.random() > 0.6 ? "BUY" : (Math.random() > 0.5 ? "SELL" : "HOLD");
         confidence = Math.floor(Math.random() * 20) + 75; // 75-95%
-        reason = action === "BUY" 
-          ? "Micro-structure breakout on 1m timeframe" 
+        reason = action === "BUY"
+          ? "Micro-structure breakout on 1m timeframe"
           : (action === "SELL" ? "Order flow imbalance detected" : "Volatility consolidation");
       } else if (strategy === "deep-momentum") {
         // Trend following, higher confidence required
         action = Math.random() > 0.7 ? "BUY" : (Math.random() > 0.6 ? "SELL" : "HOLD");
         confidence = Math.floor(Math.random() * 15) + 84; // 84-99%
-        reason = action === "BUY" 
-          ? "Deep Learning Trend Confirmation (Layer 4)" 
+        reason = action === "BUY"
+          ? "Deep Learning Trend Confirmation (Layer 4)"
           : (action === "SELL" ? "Trend exhaustion signal via LSTM" : "Awaiting trend confirmation");
       } else if (strategy === "sentiment-flow") {
         // Sentiment based
         action = Math.random() > 0.6 ? "BUY" : (Math.random() > 0.5 ? "SELL" : "HOLD");
         confidence = Math.floor(Math.random() * 25) + 70; // 70-95%
-        reason = action === "BUY" 
-          ? "Positive social sentiment spike detected" 
+        reason = action === "BUY"
+          ? "Positive social sentiment spike detected"
           : (action === "SELL" ? "Negative news catalyst probability > 80%" : "Neutral sentiment baseline");
       }
-      
+
       // Calculate simulated profit based on confidence and action
       // Higher confidence = slightly higher simulated profit for demo purposes
       // Base random movement between -2% to +5%
       let profitPercent = (Math.random() * 7 - 2) / 100;
-      
+
       // If action is SELL and we "shorted", profit is inverse of price movement
       if (action === "SELL") profitPercent = profitPercent * -1;
       if (action === "HOLD") profitPercent = 0;
@@ -202,51 +301,53 @@ export default function Dashboard() {
         setTransactions(prev => [newTransaction, ...prev].slice(0, 50));
       }
 
-    }, 3000); // New prediction every 3 seconds for demo (user asked for 5 min)
+    }, 3000); // New prediction every 3 seconds for demo
 
     return () => clearInterval(interval);
-  }, []);
+  }, [topGainers, topLosers]);
 
-  // Update chart when stock changes
+  // Simulate live chart movement (only if using generated data)
   useEffect(() => {
-    setChartData(generateStockData(selectedStock.price));
-  }, [selectedStock]);
+    if (chartData.length === 0 || !selectedStock) return;
 
-  // Simulate live chart movement
-  useEffect(() => {
+    // Only update chart if we're using generated data (fallback)
+    const isGeneratedData = chartData.length === 20 && chartData[0]?.time?.includes(':');
+
+    if (!isGeneratedData) return;
+
     const interval = setInterval(() => {
       setChartData(currentData => {
         const newData = [...currentData];
         const lastPoint = newData[newData.length - 1];
-        
+
         // Remove first point to keep window fixed size
         newData.shift();
-        
+
         // Generate next price point
         const volatility = 0.005; // 0.5% volatility
         const change = 1 + (Math.random() * volatility * 2 - volatility);
         const newPrice = lastPoint.price * change;
-        
+
         // Calculate new time label
         const lastTime = lastPoint.time.split(':');
         let hours = parseInt(lastTime[0]);
-        let minutes = parseInt(lastTime[1]) + 5; // 5 minute intervals as requested originally, but updating faster for visual effect
+        let minutes = parseInt(lastTime[1]) + 5; // 5 minute intervals
         if (minutes >= 60) {
           hours += 1;
           minutes = 0;
         }
-        
+
         newData.push({
           time: `${hours}:${minutes.toString().padStart(2, '0')}`,
           price: newPrice
         });
-        
+
         return newData;
       });
     }, 1000); // Update chart every 1 second
 
     return () => clearInterval(interval);
-  }, []);
+  }, [chartData, selectedStock]);
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col overflow-hidden">
@@ -291,26 +392,34 @@ export default function Dashboard() {
             
             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
               <TabsContent value="gainers" className="mt-0 space-y-2">
-                {TOP_GAINERS.map((stock) => (
-                  <StockCard 
-                    key={stock.symbol} 
-                    stock={stock} 
-                    isSelected={selectedStock.symbol === stock.symbol}
-                    onClick={() => setSelectedStock(stock)}
-                    type="gainer"
-                  />
-                ))}
+                {loading ? (
+                  <div className="text-center text-muted-foreground py-4">Loading market data...</div>
+                ) : (
+                  topGainers.map((stock) => (
+                    <StockCard 
+                      key={stock.symbol} 
+                      stock={stock} 
+                      isSelected={selectedStock?.symbol === stock.symbol}
+                      onClick={() => setSelectedStock(stock)}
+                      type="gainer"
+                    />
+                  ))
+                )}
               </TabsContent>
               <TabsContent value="losers" className="mt-0 space-y-2">
-                {TOP_LOSERS.map((stock) => (
-                  <StockCard 
-                    key={stock.symbol} 
-                    stock={stock} 
-                    isSelected={selectedStock.symbol === stock.symbol}
-                    onClick={() => setSelectedStock(stock)}
-                    type="loser"
-                  />
-                ))}
+                {loading ? (
+                  <div className="text-center text-muted-foreground py-4">Loading market data...</div>
+                ) : (
+                  topLosers.map((stock) => (
+                    <StockCard 
+                      key={stock.symbol} 
+                      stock={stock} 
+                      isSelected={selectedStock?.symbol === stock.symbol}
+                      onClick={() => setSelectedStock(stock)}
+                      type="loser"
+                    />
+                  ))
+                )}
               </TabsContent>
             </div>
           </Tabs>
@@ -324,24 +433,30 @@ export default function Dashboard() {
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <div>
                 <CardTitle className="text-3xl font-orbitron tracking-wider text-white flex items-baseline gap-3">
-                  {selectedStock.symbol}
-                  <span className={`text-lg font-rajdhani ${selectedStock.change.startsWith('+') ? 'text-primary' : 'text-destructive'}`}>
-                    {selectedStock.price.toFixed(2)}
-                  </span>
+                  {selectedStock?.symbol || 'Loading...'}
+                  {selectedStock && (
+                    <span className={`text-lg font-rajdhani ${selectedStock.change.startsWith('+') ? 'text-primary' : 'text-destructive'}`}>
+                      {selectedStock.price.toFixed(2)}
+                    </span>
+                  )}
                 </CardTitle>
-                <p className="text-muted-foreground text-xs font-rajdhani uppercase tracking-widest mt-1">{selectedStock.name} // VOL: {selectedStock.vol}</p>
+                <p className="text-muted-foreground text-xs font-rajdhani uppercase tracking-widest mt-1">
+                  {selectedStock?.name || 'Loading...'} // VOL: {selectedStock?.vol || 'N/A'}
+                </p>
               </div>
-              <Badge variant="outline" className={`font-mono text-lg px-4 py-1 ${selectedStock.change.startsWith('+') ? 'border-primary text-primary bg-primary/10' : 'border-destructive text-destructive bg-destructive/10'}`}>
-                {selectedStock.change}
-              </Badge>
+              {selectedStock && (
+                <Badge variant="outline" className={`font-mono text-lg px-4 py-1 ${selectedStock.change.startsWith('+') ? 'border-primary text-primary bg-primary/10' : 'border-destructive text-destructive bg-destructive/10'}`}>
+                  {selectedStock.change}
+                </Badge>
+              )}
             </CardHeader>
             <CardContent className="h-[calc(100%-80px)] w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={chartData}>
                   <defs>
                     <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={selectedStock.change.startsWith('+') ? "var(--color-primary)" : "var(--color-destructive)"} stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor={selectedStock.change.startsWith('+') ? "var(--color-primary)" : "var(--color-destructive)"} stopOpacity={0}/>
+                      <stop offset="5%" stopColor={selectedStock?.change.startsWith('+') ? "var(--color-primary)" : "var(--color-destructive)"} stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor={selectedStock?.change.startsWith('+') ? "var(--color-primary)" : "var(--color-destructive)"} stopOpacity={0}/>
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
@@ -354,7 +469,7 @@ export default function Dashboard() {
                   <Area 
                     type="monotone" 
                     dataKey="price" 
-                    stroke={selectedStock.change.startsWith('+') ? "var(--color-primary)" : "var(--color-destructive)"} 
+                    stroke={selectedStock?.change.startsWith('+') ? "var(--color-primary)" : "var(--color-destructive)"} 
                     strokeWidth={2}
                     fillOpacity={1} 
                     fill="url(#colorPrice)" 
@@ -489,7 +604,7 @@ export default function Dashboard() {
                       <div className={`text-sm font-bold font-mono ${tx.profit >= 0 ? 'text-primary' : 'text-destructive'}`}>
                         {tx.profit >= 0 ? '+' : ''}${tx.profit.toFixed(2)}
                       </div>
-                      <span className="text-[10px] text-muted-foreground font-mono">BAL: ${(100 + tx.profit).toFixed(2)}</span>
+                      <span className="text-[10px] text-muted-foreground font-mono">BAL: ${(balance + tx.profit).toFixed(2)}</span>
                     </div>
                   </motion.div>
                 ))}
@@ -509,7 +624,15 @@ export default function Dashboard() {
   );
 }
 
-function StockCard({ stock, isSelected, onClick, type }: { stock: any, isSelected: boolean, onClick: () => void, type: 'gainer' | 'loser' }) {
+interface Stock {
+  symbol: string;
+  name: string;
+  price: number;
+  change: string;
+  vol: string;
+}
+
+function StockCard({ stock, isSelected, onClick, type }: { stock: Stock, isSelected: boolean, onClick: () => void, type: 'gainer' | 'loser' }) {
   return (
     <div 
       onClick={onClick}
