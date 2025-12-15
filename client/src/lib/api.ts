@@ -5,6 +5,7 @@ export interface StockQuote {
   price: number;
   change: string;
   vol: string;
+  currency?: string;
 }
 
 export interface HistoricalData {

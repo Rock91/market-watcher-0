@@ -127,7 +127,8 @@ export async function registerRoutes(
             : '0.00%',
           vol: quote.regularMarketVolume
             ? `${(quote.regularMarketVolume / 1000000).toFixed(1)}M`
-            : 'N/A'
+            : 'N/A',
+          currency: quote.currency || 'USD'
         }));
 
       // Sort by change percentage and filter by type

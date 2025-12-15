@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -14,7 +15,8 @@ import {
   BarChart3,
   Search,
   ShieldCheck,
-  BrainCircuit
+  BrainCircuit,
+  RefreshCw
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { motion, AnimatePresence } from "framer-motion";
@@ -36,18 +38,18 @@ const generateStockData = (basePrice: number) => {
 
 // Mock Gainers/Losers
 const TOP_GAINERS = [
-  { symbol: "NVDA", name: "NVIDIA Corp", price: 145.32, change: "+12.4%", vol: "45M" },
-  { symbol: "AMD", name: "Adv Micro Dev", price: 178.90, change: "+8.2%", vol: "22M" },
-  { symbol: "PLTR", name: "Palantir Tech", price: 24.50, change: "+7.8%", vol: "18M" },
-  { symbol: "COIN", name: "Coinbase Global", price: 265.12, change: "+6.5%", vol: "12M" },
-  { symbol: "TSLA", name: "Tesla Inc", price: 180.45, change: "+5.9%", vol: "35M" },
-  { symbol: "MARA", name: "Marathon Digital", price: 22.30, change: "+5.4%", vol: "8M" },
-  { symbol: "MSTR", name: "MicroStrategy", price: 1650.00, change: "+4.8%", vol: "1.2M" },
-  { symbol: "RIOT", name: "Riot Platforms", price: 12.45, change: "+4.2%", vol: "5M" },
-  { symbol: "HOOD", name: "Robinhood", price: 19.80, change: "+3.9%", vol: "6M" },
-  { symbol: "DKNG", name: "DraftKings", price: 44.20, change: "+3.5%", vol: "4M" },
-  { symbol: "ARM", name: "Arm Holdings", price: 132.50, change: "+3.2%", vol: "3M" },
-  { symbol: "SMCI", name: "Super Micro", price: 890.10, change: "+2.9%", vol: "2M" },
+  { symbol: "NVDA", name: "NVIDIA Corp", price: 145.32, change: "+12.4%", vol: "45M", currency: "USD" },
+  { symbol: "AMD", name: "Adv Micro Dev", price: 178.90, change: "+8.2%", vol: "22M", currency: "USD" },
+  { symbol: "PLTR", name: "Palantir Tech", price: 24.50, change: "+7.8%", vol: "18M", currency: "USD" },
+  { symbol: "COIN", name: "Coinbase Global", price: 265.12, change: "+6.5%", vol: "12M", currency: "USD" },
+  { symbol: "TSLA", name: "Tesla Inc", price: 180.45, change: "+5.9%", vol: "35M", currency: "USD" },
+  { symbol: "MARA", name: "Marathon Digital", price: 22.30, change: "+5.4%", vol: "8M", currency: "USD" },
+  { symbol: "MSTR", name: "MicroStrategy", price: 1650.00, change: "+4.8%", vol: "1.2M", currency: "USD" },
+  { symbol: "RIOT", name: "Riot Platforms", price: 12.45, change: "+4.2%", vol: "5M", currency: "USD" },
+  { symbol: "HOOD", name: "Robinhood", price: 19.80, change: "+3.9%", vol: "6M", currency: "USD" },
+  { symbol: "DKNG", name: "DraftKings", price: 44.20, change: "+3.5%", vol: "4M", currency: "USD" },
+  { symbol: "ARM", name: "Arm Holdings", price: 132.50, change: "+3.2%", vol: "3M", currency: "USD" },
+  { symbol: "SMCI", name: "Super Micro", price: 890.10, change: "+2.9%", vol: "2M", currency: "USD" },
   { symbol: "META", name: "Meta Platforms", price: 485.60, change: "+2.5%", vol: "15M" },
   { symbol: "NET", name: "Cloudflare", price: 92.40, change: "+2.2%", vol: "5M" },
   { symbol: "UBER", name: "Uber Tech", price: 78.90, change: "+2.0%", vol: "9M" },
@@ -59,26 +61,26 @@ const TOP_GAINERS = [
 ];
 
 const TOP_LOSERS = [
-  { symbol: "INTC", name: "Intel Corp", price: 30.12, change: "-8.4%", vol: "30M" },
-  { symbol: "WBA", name: "Walgreens Boots", price: 18.45, change: "-7.2%", vol: "10M" },
-  { symbol: "LULU", name: "Lululemon", price: 290.50, change: "-6.8%", vol: "5M" },
-  { symbol: "NKE", name: "Nike Inc", price: 92.30, change: "-5.5%", vol: "12M" },
-  { symbol: "BA", name: "Boeing Co", price: 175.60, change: "-4.9%", vol: "8M" },
-  { symbol: "T", name: "AT&T Inc", price: 16.20, change: "-3.8%", vol: "25M" },
-  { symbol: "VZ", name: "Verizon", price: 38.90, change: "-3.2%", vol: "20M" },
-  { symbol: "DIS", name: "Disney", price: 110.40, change: "-2.9%", vol: "15M" },
-  { symbol: "PFE", name: "Pfizer", price: 26.80, change: "-2.5%", vol: "18M" },
-  { symbol: "XOM", name: "Exxon Mobil", price: 115.20, change: "-2.1%", vol: "14M" },
-  { symbol: "JNJ", name: "Johnson & Johnson", price: 145.60, change: "-1.9%", vol: "8M" },
-  { symbol: "KO", name: "Coca-Cola", price: 58.90, change: "-1.8%", vol: "10M" },
-  { symbol: "PEP", name: "PepsiCo", price: 165.40, change: "-1.7%", vol: "5M" },
-  { symbol: "MCD", name: "McDonald's", price: 278.50, change: "-1.5%", vol: "4M" },
-  { symbol: "SBUX", name: "Starbucks", price: 85.20, change: "-1.4%", vol: "6M" },
-  { symbol: "WMT", name: "Walmart", price: 59.80, change: "-1.2%", vol: "12M" },
-  { symbol: "TGT", name: "Target", price: 135.60, change: "-1.1%", vol: "5M" },
-  { symbol: "COST", name: "Costco", price: 745.20, change: "-1.0%", vol: "3M" },
-  { symbol: "PG", name: "Procter & Gamble", price: 158.40, change: "-0.9%", vol: "4M" },
-  { symbol: "CVX", name: "Chevron", price: 148.90, change: "-0.8%", vol: "7M" },
+  { symbol: "INTC", name: "Intel Corp", price: 30.12, change: "-8.4%", vol: "30M", currency: "USD" },
+  { symbol: "WBA", name: "Walgreens Boots", price: 18.45, change: "-7.2%", vol: "10M", currency: "USD" },
+  { symbol: "LULU", name: "Lululemon", price: 290.50, change: "-6.8%", vol: "5M", currency: "USD" },
+  { symbol: "NKE", name: "Nike Inc", price: 92.30, change: "-5.5%", vol: "12M", currency: "USD" },
+  { symbol: "BA", name: "Boeing Co", price: 175.60, change: "-4.9%", vol: "8M", currency: "USD" },
+  { symbol: "T", name: "AT&T Inc", price: 16.20, change: "-3.8%", vol: "25M", currency: "USD" },
+  { symbol: "VZ", name: "Verizon", price: 38.90, change: "-3.2%", vol: "20M", currency: "USD" },
+  { symbol: "DIS", name: "Disney", price: 110.40, change: "-2.9%", vol: "15M", currency: "USD" },
+  { symbol: "PFE", name: "Pfizer", price: 26.80, change: "-2.5%", vol: "18M", currency: "USD" },
+  { symbol: "XOM", name: "Exxon Mobil", price: 115.20, change: "-2.1%", vol: "14M", currency: "USD" },
+  { symbol: "JNJ", name: "Johnson & Johnson", price: 145.60, change: "-1.9%", vol: "8M", currency: "USD" },
+  { symbol: "KO", name: "Coca-Cola", price: 58.90, change: "-1.8%", vol: "10M", currency: "USD" },
+  { symbol: "PEP", name: "PepsiCo", price: 165.40, change: "-1.7%", vol: "5M", currency: "USD" },
+  { symbol: "MCD", name: "McDonald's", price: 278.50, change: "-1.5%", vol: "4M", currency: "USD" },
+  { symbol: "SBUX", name: "Starbucks", price: 85.20, change: "-1.4%", vol: "6M", currency: "USD" },
+  { symbol: "WMT", name: "Walmart", price: 59.80, change: "-1.2%", vol: "12M", currency: "USD" },
+  { symbol: "TGT", name: "Target", price: 135.60, change: "-1.1%", vol: "5M", currency: "USD" },
+  { symbol: "COST", name: "Costco", price: 745.20, change: "-1.0%", vol: "3M", currency: "USD" },
+  { symbol: "PG", name: "Procter & Gamble", price: 158.40, change: "-0.9%", vol: "4M", currency: "USD" },
+  { symbol: "CVX", name: "Chevron", price: 148.90, change: "-0.8%", vol: "7M", currency: "USD" },
 ];
 
 interface PredictionLog {
@@ -106,6 +108,7 @@ interface Stock {
   price: number;
   change: string;
   vol: string;
+  currency?: string;
 }
 
 export default function Dashboard() {
@@ -119,6 +122,7 @@ export default function Dashboard() {
   const [topLosers, setTopLosers] = useState<StockQuote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Use ref to keep track of current balance inside interval closure
   const balanceRef = useRef(balance);
@@ -157,16 +161,16 @@ export default function Dashboard() {
         setError('Failed to load market data. Using demo mode.');
         // Fallback to mock data if API fails
         setTopGainers([
-          { symbol: "NVDA", name: "NVIDIA Corp", price: 145.32, change: "+12.4%", vol: "45M" },
-          { symbol: "AMD", name: "Adv Micro Dev", price: 178.90, change: "+8.2%", vol: "22M" },
-          { symbol: "PLTR", name: "Palantir Tech", price: 24.50, change: "+7.8%", vol: "18M" },
+          { symbol: "NVDA", name: "NVIDIA Corp", price: 145.32, change: "+12.4%", vol: "45M", currency: "USD" },
+          { symbol: "AMD", name: "Adv Micro Dev", price: 178.90, change: "+8.2%", vol: "22M", currency: "USD" },
+          { symbol: "PLTR", name: "Palantir Tech", price: 24.50, change: "+7.8%", vol: "18M", currency: "USD" },
         ]);
         setTopLosers([
-          { symbol: "INTC", name: "Intel Corp", price: 30.12, change: "-8.4%", vol: "30M" },
-          { symbol: "WBA", name: "Walgreens Boots", price: 18.45, change: "-7.2%", vol: "10M" },
+          { symbol: "INTC", name: "Intel Corp", price: 30.12, change: "-8.4%", vol: "30M", currency: "USD" },
+          { symbol: "WBA", name: "Walgreens Boots", price: 18.45, change: "-7.2%", vol: "10M", currency: "USD" },
         ]);
         if (!selectedStock) {
-          setSelectedStock({ symbol: "NVDA", name: "NVIDIA Corp", price: 145.32, change: "+12.4%", vol: "45M" });
+          setSelectedStock({ symbol: "NVDA", name: "NVIDIA Corp", price: 145.32, change: "+12.4%", vol: "45M", currency: "USD" });
         }
       } finally {
         setLoading(false);
@@ -175,6 +179,27 @@ export default function Dashboard() {
 
     loadInitialData();
   }, []);
+
+  // Function to refresh market data
+  const refreshMarketData = async () => {
+    try {
+      setRefreshing(true);
+      setError(null);
+
+      const [gainers, losers] = await Promise.all([
+        fetchMarketMovers('gainers', 20),
+        fetchMarketMovers('losers', 20)
+      ]);
+
+      setTopGainers(gainers);
+      setTopLosers(losers);
+    } catch (err) {
+      console.error('Error refreshing market data:', err);
+      setError('Failed to refresh market data');
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   // Update chart when stock changes
   useEffect(() => {
@@ -441,6 +466,20 @@ export default function Dashboard() {
               <TabsTrigger value="gainers" className="rounded-none data-[state=active]:bg-primary/20 data-[state=active]:text-primary font-orbitron text-xs">TOP GAINERS</TabsTrigger>
               <TabsTrigger value="losers" className="rounded-none data-[state=active]:bg-destructive/20 data-[state=active]:text-destructive font-orbitron text-xs">TOP LOSERS</TabsTrigger>
             </TabsList>
+
+            {/* Refresh Button */}
+            <div className="mb-4">
+              <Button
+                onClick={refreshMarketData}
+                disabled={refreshing}
+                variant="outline"
+                size="sm"
+                className="w-full bg-black/20 border-white/10 hover:bg-primary/10 hover:border-primary/50 text-white font-orbitron text-xs"
+              >
+                <RefreshCw className={`w-3 h-3 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+                {refreshing ? 'REFRESHING...' : 'UPDATE MARKET DATA'}
+              </Button>
+            </div>
             
             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
               <TabsContent value="gainers" className="mt-0 space-y-2">
@@ -488,7 +527,7 @@ export default function Dashboard() {
                   {selectedStock?.symbol || 'Loading...'}
                   {selectedStock && (
                     <span className={`text-lg font-rajdhani ${selectedStock.change.startsWith('+') ? 'text-primary' : 'text-destructive'}`}>
-                      {selectedStock.price.toFixed(2)}
+                      {selectedStock.currency ? `${selectedStock.currency} ` : '$'}{selectedStock.price.toFixed(2)}
                     </span>
                   )}
                 </CardTitle>
@@ -682,6 +721,7 @@ interface Stock {
   price: number;
   change: string;
   vol: string;
+  currency?: string;
 }
 
 function StockCard({ stock, isSelected, onClick, type }: { stock: Stock, isSelected: boolean, onClick: () => void, type: 'gainer' | 'loser' }) {
@@ -705,7 +745,9 @@ function StockCard({ stock, isSelected, onClick, type }: { stock: Stock, isSelec
           <p className={`text-sm font-bold font-mono ${type === 'gainer' ? 'text-primary' : 'text-destructive'}`}>
             {stock.change}
           </p>
-          <p className="text-[10px] text-muted-foreground">{stock.price}</p>
+          <p className="text-[10px] text-muted-foreground">
+            {stock.currency ? `${stock.currency} ` : '$'}{typeof stock.price === 'number' ? stock.price.toFixed(2) : stock.price}
+          </p>
         </div>
       </div>
     </div>
