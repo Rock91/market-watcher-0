@@ -10,9 +10,25 @@ export interface PriceUpdate {
   timestamp: number;
 }
 
+export interface MarketMover {
+  symbol: string;
+  name: string;
+  price: number;
+  change: string;
+  changePercent: number;
+}
+
+export interface MarketMoversUpdate {
+  type: 'market_movers_update';
+  gainers: MarketMover[];
+  losers: MarketMover[];
+  timestamp: number;
+}
+
 export const useWebSocket = (url: string, symbols: string[] = []) => {
   const [isConnected, setIsConnected] = useState(false);
   const [priceUpdates, setPriceUpdates] = useState<PriceUpdate[]>([]);
+  const [marketMovers, setMarketMovers] = useState<{ gainers: MarketMover[], losers: MarketMover[], timestamp: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const ws = useRef<WebSocket | null>(null);
   const reconnectTimeout = useRef<NodeJS.Timeout | null>(null);
@@ -44,6 +60,12 @@ export const useWebSocket = (url: string, symbols: string[] = []) => {
           const data = JSON.parse(event.data);
           if (data.type === 'price_update') {
             setPriceUpdates(prev => [...prev.slice(-9), data]); // Keep last 10 updates
+          } else if (data.type === 'market_movers_update') {
+            setMarketMovers({
+              gainers: data.gainers,
+              losers: data.losers,
+              timestamp: data.timestamp
+            });
           }
         } catch (err) {
           console.error('Error parsing WebSocket message:', err);
@@ -116,6 +138,7 @@ export const useWebSocket = (url: string, symbols: string[] = []) => {
   return {
     isConnected,
     priceUpdates,
+    marketMovers,
     error,
     subscribe,
     disconnect,

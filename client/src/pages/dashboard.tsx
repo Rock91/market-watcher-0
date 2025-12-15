@@ -21,7 +21,7 @@ import {
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { motion, AnimatePresence } from "framer-motion";
 import { fetchStockQuote, fetchHistoricalData, fetchMarketMovers, type StockQuote } from "@/lib/api";
-import { useWebSocket, type PriceUpdate } from "@/hooks/use-websocket";
+import { useWebSocket, type PriceUpdate, type MarketMover } from "@/hooks/use-websocket";
 
 // Mock Data Generators
 const generateStockData = (basePrice: number) => {
@@ -126,7 +126,7 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
 
   // WebSocket connection for real-time updates
-  const { isConnected, priceUpdates, error: wsError } = useWebSocket('ws://localhost:3001', [
+  const { isConnected, priceUpdates, marketMovers, error: wsError } = useWebSocket('ws://localhost:3001', [
     'AAPL', 'GOOGL', 'MSFT', 'TSLA', 'NVDA', 'AMZN', 'META', 'NFLX', 'GOOG'
   ]);
 
@@ -185,6 +185,29 @@ export default function Dashboard() {
 
     loadInitialData();
   }, []);
+
+  // Handle real-time market movers updates from WebSocket
+  useEffect(() => {
+    if (marketMovers) {
+      console.log('Received real-time market movers update:', marketMovers.gainers.length, 'gainers,', marketMovers.losers.length, 'losers');
+      setTopGainers(marketMovers.gainers.map(mover => ({
+        symbol: mover.symbol,
+        name: mover.name,
+        price: mover.price,
+        change: mover.change,
+        vol: 'N/A', // Volume not included in market movers data
+        currency: 'USD'
+      })));
+      setTopLosers(marketMovers.losers.map(mover => ({
+        symbol: mover.symbol,
+        name: mover.name,
+        price: mover.price,
+        change: mover.change,
+        vol: 'N/A', // Volume not included in market movers data
+        currency: 'USD'
+      })));
+    }
+  }, [marketMovers]);
 
   // Handle real-time price updates from WebSocket
   useEffect(() => {
