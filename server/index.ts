@@ -67,7 +67,7 @@ setInterval(async () => {
 
     for (const symbol of popularSymbols) {
       try {
-        const quote: any = await yahooFinance.quote(symbol);
+        const quote: any = await yahooFinanceInstance.quote(symbol);
         const update = {
           type: 'price_update',
           symbol: quote.symbol,

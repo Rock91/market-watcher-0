@@ -105,57 +105,30 @@ export async function registerRoutes(
     const { count = 20 } = req.query;
 
     try {
-
       console.log(`[${new Date().toISOString()}] Fetching ${type} market movers, count: ${count}`);
 
-      // Get trending symbols first
-      const trending: any = await yahooFinance.trendingSymbols('en-us', { count: parseInt(count as string) * 3 });
-      console.log(`[${new Date().toISOString()}] Trending symbols fetched:`, trending.symbols?.length || 0);
+      // Use screener API instead of deprecated dailyGainers/dailyLosers
+      const scrId = type === 'gainers' ? 'day_gainers' : 'day_losers';
+      const screen = await yahooFinance.screener({ scrIds: scrId, count: parseInt(count as string) });
 
-      // Get quotes for trending symbols
-      const symbols = trending.symbols?.slice(0, parseInt(count as string) * 2) || [];
-      console.log(`[${new Date().toISOString()}] Symbols to fetch quotes for:`, symbols.length);
+      console.log(`[${new Date().toISOString()}] Market movers fetched:`, screen?.quotes?.length || 0);
 
-      if (symbols.length === 0) {
-        console.log(`[${new Date().toISOString()}] No symbols found, returning empty array`);
-        return res.json([]);
-      }
+      // Format the response
+      const result = screen?.quotes?.map((quote: any) => ({
+        symbol: quote.symbol,
+        name: quote.shortName || quote.longName || '',
+        price: quote.regularMarketPrice || 0,
+        change: quote.regularMarketChangePercent
+          ? `${quote.regularMarketChangePercent >= 0 ? '+' : ''}${(quote.regularMarketChangePercent * 100).toFixed(2)}%`
+          : '0.00%',
+        vol: quote.regularMarketVolume
+          ? `${(quote.regularMarketVolume / 1000000).toFixed(1)}M`
+          : 'N/A',
+        currency: quote.currency || 'USD'
+      })) || [];
 
-      // Get quotes for these symbols
-      const quotesPromises = symbols.map((symbol: any) => yahooFinance.quote(symbol.symbol || symbol));
-      const quotes = await Promise.allSettled(quotesPromises);
-
-      console.log(`[${new Date().toISOString()}] Quotes fetched: ${quotes.filter(q => q.status === 'fulfilled').length} successful, ${quotes.filter(q => q.status === 'rejected').length} failed`);
-
-      // Filter successful quotes and format data
-      const validQuotes = quotes
-        .filter((result): result is PromiseFulfilledResult<any> => result.status === 'fulfilled')
-        .map(result => result.value)
-        .filter(quote => quote && quote.symbol && quote.regularMarketPrice)
-        .map(quote => ({
-          symbol: quote.symbol,
-          name: quote.shortName || quote.longName || '',
-          price: quote.regularMarketPrice || 0,
-          change: quote.regularMarketChangePercent
-            ? `${quote.regularMarketChangePercent >= 0 ? '+' : ''}${(quote.regularMarketChangePercent * 100).toFixed(2)}%`
-            : '0.00%',
-          vol: quote.regularMarketVolume
-            ? `${(quote.regularMarketVolume / 1000000).toFixed(1)}M`
-            : 'N/A',
-          currency: quote.currency || 'USD'
-        }));
-
-      // Sort by change percentage and filter by type
-      const sortedQuotes = validQuotes.sort((a, b) => {
-        const aChange = parseFloat(a.change);
-        const bChange = parseFloat(b.change);
-        return type === 'gainers' ? bChange - aChange : aChange - bChange;
-      });
-
-      const result = sortedQuotes.slice(0, parseInt(count as string));
       console.log(`[${new Date().toISOString()}] Returning ${result.length} ${type} results:`, result.map(r => `${r.symbol}: ${r.change}`));
 
-      // Return top results
       res.json(result);
     } catch (error) {
       console.error(`[${new Date().toISOString()}] Error fetching market movers:`, error);
@@ -181,12 +154,36 @@ export async function registerRoutes(
     console.log(`[${new Date().toISOString()}] Fetching trending symbols, count: ${count}`);
 
     try {
-      const trending: any = await yahooFinance.trendingSymbols('en-us', { count: parseInt(count as string) });
-      console.log(`[${new Date().toISOString()}] Trending symbols fetched successfully: ${trending.symbols?.length || 0} symbols`);
+      // Use screener API for day gainers as trending symbols
+      const screen = await yahooFinance.screener({ scrIds: 'day_gainers', count: Math.ceil(parseInt(count as string) / 2) });
+      console.log(`[${new Date().toISOString()}] Trending symbols (gainers) fetched successfully: ${screen?.quotes?.length || 0} symbols`);
+
+      // Format as trending symbols format
+      const trending = {
+        symbols: screen?.quotes?.map((quote: any) => ({
+          symbol: quote.symbol,
+          name: quote.shortName || quote.longName || '',
+          price: quote.regularMarketPrice || 0
+        })) || []
+      };
+
       res.json(trending);
     } catch (error) {
       console.error(`[${new Date().toISOString()}] Error fetching trending symbols:`, error);
-      res.status(500).json({ error: 'Failed to fetch trending symbols' });
+      // Fallback to popular stocks
+      const fallbackSymbols = [
+        { symbol: 'AAPL', name: 'Apple Inc.' },
+        { symbol: 'MSFT', name: 'Microsoft Corp.' },
+        { symbol: 'GOOGL', name: 'Alphabet Inc.' },
+        { symbol: 'AMZN', name: 'Amazon.com Inc.' },
+        { symbol: 'TSLA', name: 'Tesla Inc.' },
+        { symbol: 'NVDA', name: 'NVIDIA Corp.' },
+        { symbol: 'META', name: 'Meta Platforms Inc.' },
+        { symbol: 'NFLX', name: 'Netflix Inc.' }
+      ].slice(0, parseInt(count as string));
+
+      console.log(`[${new Date().toISOString()}] Returning fallback trending symbols: ${fallbackSymbols.length}`);
+      res.json({ symbols: fallbackSymbols });
     }
   });
 
