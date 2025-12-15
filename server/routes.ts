@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import yahooFinance from 'yahoo-finance2';
 import { storage } from "./storage";
 import { generateAISignal, type MarketData } from "./ai-strategies";
+import { getStockHistory, getLatestMarketMovers } from "./clickhouse";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -145,6 +146,43 @@ export async function registerRoutes(
         { symbol: "LULU", name: "Lululemon", price: 290.50, change: "-6.8%", vol: "5M" },
       ];
       res.json(type === 'gainers' ? mockGainers : mockLosers);
+    }
+  });
+
+  // ClickHouse Historical Data Endpoints
+
+  // Get historical stock quotes from ClickHouse
+  app.get('/api/stocks/:symbol/history-clickhouse', async (req, res) => {
+    try {
+      const { symbol } = req.params;
+      const { hours = 24, limit = 1000 } = req.query;
+
+      console.log(`[${new Date().toISOString()}] Fetching ClickHouse history for ${symbol}, last ${hours} hours, limit ${limit}`);
+
+      const history = await getStockHistory(symbol, parseInt(hours as string), parseInt(limit as string));
+
+      console.log(`[${new Date().toISOString()}] Retrieved ${history.length} historical records for ${symbol}`);
+      res.json(history);
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] Error fetching ClickHouse history for ${symbol}:`, error);
+      res.status(500).json({ error: 'Failed to fetch historical data from ClickHouse' });
+    }
+  });
+
+  // Get historical market movers from ClickHouse
+  app.get('/api/market/movers/history-clickhouse', async (req, res) => {
+    try {
+      const { type, limit = 100 } = req.query; // type: 'gainers' or 'losers'
+
+      console.log(`[${new Date().toISOString()}] Fetching ClickHouse market movers, type: ${type}, limit ${limit}`);
+
+      const history = await getLatestMarketMovers(type as 'gainers' | 'losers', parseInt(limit as string));
+
+      console.log(`[${new Date().toISOString()}] Retrieved ${history.length} market movers records`);
+      res.json(history);
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] Error fetching ClickHouse market movers:`, error);
+      res.status(500).json({ error: 'Failed to fetch market movers from ClickHouse' });
     }
   });
 

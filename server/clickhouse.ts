@@ -1,0 +1,192 @@
+import { createClient } from '@clickhouse/client';
+
+const CLICKHOUSE_HOST = process.env.CLICKHOUSE_HOST || 'localhost';
+const CLICKHOUSE_PORT = process.env.CLICKHOUSE_PORT || '8123';
+const CLICKHOUSE_USERNAME = process.env.CLICKHOUSE_USERNAME || 'default';
+const CLICKHOUSE_PASSWORD = process.env.CLICKHOUSE_PASSWORD || '';
+const CLICKHOUSE_DATABASE = process.env.CLICKHOUSE_DATABASE || 'market_data';
+
+export const clickhouseClient = createClient({
+  url: `http://${CLICKHOUSE_HOST}:${CLICKHOUSE_PORT}`,
+  username: CLICKHOUSE_USERNAME,
+  password: CLICKHOUSE_PASSWORD,
+  database: CLICKHOUSE_DATABASE,
+});
+
+// Initialize database and tables
+export async function initializeClickHouse() {
+  try {
+    console.log(`[${new Date().toISOString()}] Initializing ClickHouse database...`);
+
+    // Test connection first
+    await clickhouseClient.ping();
+    console.log(`[${new Date().toISOString()}] ClickHouse connection successful`);
+
+    // Create database if it doesn't exist
+    await clickhouseClient.exec({
+      query: `CREATE DATABASE IF NOT EXISTS ${CLICKHOUSE_DATABASE}`,
+    });
+
+    // Create stock_quotes table for time-series price data
+    await clickhouseClient.exec({
+      query: `
+        CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_DATABASE}.stock_quotes (
+          timestamp DateTime,
+          symbol String,
+          price Float64,
+          change Float64,
+          change_percent Float64,
+          volume UInt64,
+          market_cap UInt64,
+          pe_ratio Float64,
+          day_high Float64,
+          day_low Float64,
+          previous_close Float64,
+          currency String
+        ) ENGINE = MergeTree()
+        PARTITION BY toYYYYMM(timestamp)
+        ORDER BY (symbol, timestamp)
+        TTL timestamp + INTERVAL 1 YEAR
+      `,
+    });
+
+    // Create market_movers table for daily gainers/losers
+    await clickhouseClient.exec({
+      query: `
+        CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_DATABASE}.market_movers (
+          timestamp DateTime,
+          type String, -- 'gainers' or 'losers'
+          symbol String,
+          name String,
+          price Float64,
+          change_percent Float64,
+          rank UInt32 -- position in the list (1-20)
+        ) ENGINE = MergeTree()
+        PARTITION BY toYYYYMMDD(timestamp)
+        ORDER BY (type, timestamp, rank)
+        TTL timestamp + INTERVAL 30 DAY
+      `,
+    });
+
+    // Create stock_metadata table for static stock info
+    await clickhouseClient.exec({
+      query: `
+        CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_DATABASE}.stock_metadata (
+          symbol String,
+          name String,
+          sector String,
+          industry String,
+          country String,
+          exchange String,
+          last_updated DateTime,
+          INDEX symbol_idx symbol TYPE bloom_filter GRANULARITY 1
+        ) ENGINE = ReplacingMergeTree(last_updated)
+        ORDER BY symbol
+      `,
+    });
+
+    console.log(`[${new Date().toISOString()}] ClickHouse database initialized successfully`);
+  } catch (error) {
+    console.warn(`[${new Date().toISOString()}] ClickHouse initialization failed (server will continue without database):`, error.message || error);
+    // Don't throw error - allow server to continue without ClickHouse
+  }
+}
+
+// Store stock quote data
+export async function storeStockQuote(quote: any) {
+  try {
+    await clickhouseClient.insert({
+      table: `${CLICKHOUSE_DATABASE}.stock_quotes`,
+      values: [{
+        timestamp: new Date(),
+        symbol: quote.symbol,
+        price: quote.price || 0,
+        change: quote.change || 0,
+        change_percent: quote.changePercent || 0,
+        volume: quote.volume || 0,
+        market_cap: quote.marketCap || 0,
+        pe_ratio: quote.peRatio || 0,
+        day_high: 0, // Not provided in current data
+        day_low: 0,  // Not provided in current data
+        previous_close: 0, // Not provided in current data
+        currency: 'USD'
+      }],
+      format: 'JSONEachRow',
+    });
+  } catch (error) {
+    // Silently fail if ClickHouse is not available - don't log errors
+    // The calling code will handle this gracefully
+    return;
+  }
+}
+
+// Store market movers data
+export async function storeMarketMovers(type: 'gainers' | 'losers', movers: any[]) {
+  try {
+    const values = movers.map((mover, index) => ({
+      timestamp: new Date(),
+      type,
+      symbol: mover.symbol,
+      name: mover.name,
+      price: mover.price,
+      change_percent: mover.changePercent,
+      rank: index + 1
+    }));
+
+    await clickhouseClient.insert({
+      table: `${CLICKHOUSE_DATABASE}.market_movers`,
+      values,
+      format: 'JSONEachRow',
+    });
+
+    console.log(`[${new Date().toISOString()}] Stored ${movers.length} ${type} in ClickHouse`);
+  } catch (error) {
+    // Silently fail if ClickHouse is not available - don't log errors
+    // The calling code will handle this gracefully
+    return;
+  }
+}
+
+// Query functions for retrieving stored data
+export async function getStockHistory(symbol: string, days: number = 30) {
+  try {
+    const result = await clickhouseClient.query({
+      query: `
+        SELECT *
+        FROM ${CLICKHOUSE_DATABASE}.stock_quotes
+        WHERE symbol = {symbol:String}
+        AND timestamp >= now() - INTERVAL {days:UInt32} DAY
+        ORDER BY timestamp DESC
+      `,
+      query_params: { symbol, days },
+      format: 'JSONEachRow',
+    });
+
+    return result.json();
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error querying stock history for ${symbol}:`, error);
+    return [];
+  }
+}
+
+export async function getLatestMarketMovers(type: 'gainers' | 'losers', limit: number = 20) {
+  try {
+    const result = await clickhouseClient.query({
+      query: `
+        SELECT *
+        FROM ${CLICKHOUSE_DATABASE}.market_movers
+        WHERE type = {type:String}
+        AND timestamp >= today()
+        ORDER BY timestamp DESC, rank ASC
+        LIMIT {limit:UInt32}
+      `,
+      query_params: { type, limit },
+      format: 'JSONEachRow',
+    });
+
+    return result.json();
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error querying market movers (${type}):`, error);
+    return [];
+  }
+}

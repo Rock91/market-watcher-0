@@ -34,6 +34,7 @@ export const useWebSocket = (url: string, symbols: string[] = []) => {
   const reconnectTimeout = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 5;
+  const subscribedSymbols = useRef<string[]>([]);
 
   const connect = () => {
     try {
@@ -44,14 +45,11 @@ export const useWebSocket = (url: string, symbols: string[] = []) => {
         setIsConnected(true);
         setError(null);
         reconnectAttempts.current = 0;
+        subscribedSymbols.current = []; // Clear on new connection
 
         // Subscribe to symbols
         if (symbols.length > 0) {
-          ws.current?.send(JSON.stringify({
-            type: 'subscribe',
-            symbols: symbols
-          }));
-          console.log('Subscribed to symbols:', symbols);
+          subscribe(symbols);
         }
       };
 
@@ -108,14 +106,25 @@ export const useWebSocket = (url: string, symbols: string[] = []) => {
       ws.current = null;
     }
     setIsConnected(false);
+    subscribedSymbols.current = []; // Clear subscribed symbols on disconnect
   };
 
   const subscribe = (newSymbols: string[]) => {
+    // Check if symbols have actually changed
+    const sortedNew = [...newSymbols].sort();
+    const sortedCurrent = [...subscribedSymbols.current].sort();
+    const hasChanged = JSON.stringify(sortedNew) !== JSON.stringify(sortedCurrent);
+
+    if (!hasChanged) {
+      return; // No change, don't send subscribe message
+    }
+
     if (ws.current && ws.current.readyState === WebSocket.OPEN) {
       ws.current.send(JSON.stringify({
         type: 'subscribe',
         symbols: newSymbols
       }));
+      subscribedSymbols.current = [...newSymbols];
       console.log('Subscribed to symbols:', newSymbols);
     }
   };

@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 // import { registerAuthRoutes, setupAuth } from "./auth";
@@ -5,6 +6,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import yahooFinance from 'yahoo-finance2';
+import { initializeClickHouse, storeStockQuote, storeMarketMovers } from "./clickhouse";
 
 // Initialize Yahoo Finance API
 const yahooFinanceInstance = new yahooFinance();
@@ -93,6 +95,21 @@ setInterval(async () => {
         updateCount++;
         console.log(`[${new Date().toISOString()}] Updated ${symbol}: $${quote.regularMarketPrice?.toFixed(2)} (${quote.regularMarketChangePercent?.toFixed(2)}%) - sent to ${sentCount} client(s)`);
 
+        // Store stock quote in ClickHouse (non-blocking)
+        storeStockQuote({
+          symbol: quote.symbol,
+          price: quote.regularMarketPrice || 0,
+          change: quote.regularMarketChange || 0,
+          changePercent: quote.regularMarketChangePercent || 0,
+          volume: quote.regularMarketVolume || 0,
+          marketCap: quote.marketCap || null,
+          peRatio: quote.trailingPE || null,
+          timestamp: new Date()
+        }).catch((storageError: any) => {
+          // Silently fail if ClickHouse is not available
+          console.debug(`[${new Date().toISOString()}] ClickHouse storage failed for ${symbol} (non-critical):`, storageError.message);
+        });
+
       } catch (error: any) {
         console.error(`[${new Date().toISOString()}] Error updating ${symbol}:`, error.message);
       }
@@ -149,6 +166,12 @@ setInterval(async () => {
         });
 
         console.log(`[${new Date().toISOString()}] Market movers updated: ${gainers.length} gainers, ${losers.length} losers - sent to ${moversSentCount} client(s)`);
+
+        // Store market movers in ClickHouse (non-blocking)
+        storeMarketMovers(gainers, losers).catch((storageError: any) => {
+          // Silently fail if ClickHouse is not available
+          console.debug(`[${new Date().toISOString()}] ClickHouse storage failed for market movers (non-critical):`, storageError.message);
+        });
 
       } catch (error: any) {
         console.error(`[${new Date().toISOString()}] Error fetching market movers:`, error.message);
@@ -237,6 +260,11 @@ app.use((req, res, next) => {
     await setupVite(httpServer, app);
   }
 
+  // Initialize ClickHouse database (non-blocking)
+  initializeClickHouse().catch((error) => {
+    console.warn(`[${new Date().toISOString()}] ClickHouse initialization failed (server will continue without database):`, error.message);
+  });
+
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // Other ports are firewalled. Default to 3001 if not specified.
   // this serves both the API and the client.
@@ -252,6 +280,7 @@ app.use((req, res, next) => {
       log(`[${new Date().toISOString()}] WebSocket server ready for connections`);
       log(`[${new Date().toISOString()}] Real-time price updates enabled (5-second intervals)`);
       log(`[${new Date().toISOString()}] Yahoo Finance API integration active`);
+      log(`[${new Date().toISOString()}] ClickHouse database initialized`);
     },
   );
 })();
