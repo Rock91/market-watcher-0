@@ -52,6 +52,7 @@ wss.on('connection', (ws: ExtendedWebSocket) => {
 });
 
 // Broadcast real-time price updates and market movers
+let updateCounter = 0;
 setInterval(async () => {
   if (clients.size === 0) {
     console.log(`[${new Date().toISOString()}] No WebSocket clients connected, skipping updates`);
@@ -61,7 +62,7 @@ setInterval(async () => {
   console.log(`[${new Date().toISOString()}] Broadcasting updates to ${clients.size} client(s)`);
 
   try {
-    // Get popular symbols for individual price updates
+    // Get popular symbols for individual price updates (every 5 seconds)
     const popularSymbols = ['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'NVDA', 'AMZN'];
     let updateCount = 0;
 
@@ -97,55 +98,61 @@ setInterval(async () => {
       }
     }
 
-    // Get and broadcast top 20 gainers and losers
-    try {
-      console.log(`[${new Date().toISOString()}] Fetching market movers...`);
+    // Update market movers every 30 seconds (every 6th update)
+    updateCounter++;
+    if (updateCounter >= 6) {
+      updateCounter = 0;
 
-      const [gainersData, losersData] = await Promise.all([
-        yahooFinanceInstance.screener({ scrIds: 'day_gainers', count: 20 }),
-        yahooFinanceInstance.screener({ scrIds: 'day_losers', count: 20 })
-      ]);
+      // Get and broadcast top 20 gainers and losers
+      try {
+        console.log(`[${new Date().toISOString()}] Fetching market movers...`);
 
-      const gainers = gainersData?.quotes?.slice(0, 20).map((quote: any) => ({
-        symbol: quote.symbol,
-        name: quote.shortName || quote.longName || '',
-        price: quote.regularMarketPrice || 0,
-        change: quote.regularMarketChangePercent
-          ? `${quote.regularMarketChangePercent >= 0 ? '+' : ''}${(quote.regularMarketChangePercent * 100).toFixed(2)}%`
-          : '0.00%',
-        changePercent: quote.regularMarketChangePercent || 0
-      })) || [];
+        const [gainersData, losersData] = await Promise.all([
+          yahooFinanceInstance.screener({ scrIds: 'day_gainers', count: 20 }),
+          yahooFinanceInstance.screener({ scrIds: 'day_losers', count: 20 })
+        ]);
 
-      const losers = losersData?.quotes?.slice(0, 20).map((quote: any) => ({
-        symbol: quote.symbol,
-        name: quote.shortName || quote.longName || '',
-        price: quote.regularMarketPrice || 0,
-        change: quote.regularMarketChangePercent
-          ? `${quote.regularMarketChangePercent >= 0 ? '+' : ''}${(quote.regularMarketChangePercent * 100).toFixed(2)}%`
-          : '0.00%',
-        changePercent: quote.regularMarketChangePercent || 0
-      })) || [];
+        const gainers = gainersData?.quotes?.slice(0, 20).map((quote: any) => ({
+          symbol: quote.symbol,
+          name: quote.shortName || quote.longName || '',
+          price: quote.regularMarketPrice || 0,
+          change: quote.regularMarketChangePercent
+            ? `${quote.regularMarketChangePercent >= 0 ? '+' : ''}${(quote.regularMarketChangePercent * 100).toFixed(2)}%`
+            : '0.00%',
+          changePercent: quote.regularMarketChangePercent || 0
+        })) || [];
 
-      const marketMoversUpdate = {
-        type: 'market_movers_update',
-        gainers: gainers,
-        losers: losers,
-        timestamp: Date.now()
-      };
+        const losers = losersData?.quotes?.slice(0, 20).map((quote: any) => ({
+          symbol: quote.symbol,
+          name: quote.shortName || quote.longName || '',
+          price: quote.regularMarketPrice || 0,
+          change: quote.regularMarketChangePercent
+            ? `${quote.regularMarketChangePercent >= 0 ? '+' : ''}${(quote.regularMarketChangePercent * 100).toFixed(2)}%`
+            : '0.00%',
+          changePercent: quote.regularMarketChangePercent || 0
+        })) || [];
 
-      // Send market movers to all connected clients
-      let moversSentCount = 0;
-      clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify(marketMoversUpdate));
-          moversSentCount++;
-        }
-      });
+        const marketMoversUpdate = {
+          type: 'market_movers_update',
+          gainers: gainers,
+          losers: losers,
+          timestamp: Date.now()
+        };
 
-      console.log(`[${new Date().toISOString()}] Market movers updated: ${gainers.length} gainers, ${losers.length} losers - sent to ${moversSentCount} client(s)`);
+        // Send market movers to all connected clients
+        let moversSentCount = 0;
+        clients.forEach(client => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify(marketMoversUpdate));
+            moversSentCount++;
+          }
+        });
 
-    } catch (error: any) {
-      console.error(`[${new Date().toISOString()}] Error fetching market movers:`, error.message);
+        console.log(`[${new Date().toISOString()}] Market movers updated: ${gainers.length} gainers, ${losers.length} losers - sent to ${moversSentCount} client(s)`);
+
+      } catch (error: any) {
+        console.error(`[${new Date().toISOString()}] Error fetching market movers:`, error.message);
+      }
     }
 
     console.log(`[${new Date().toISOString()}] Update cycle completed: ${updateCount}/${popularSymbols.length} symbols updated`);
@@ -153,7 +160,7 @@ setInterval(async () => {
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error in update broadcast:`, error);
   }
-}, 60000); // Update every 60 seconds (1 minute)
+}, 5000); // Update every 5 seconds
 
 declare module "http" {
   interface IncomingMessage {
