@@ -1,21 +1,30 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
-import { registerAuthRoutes, setupAuth } from "./auth";
+// import { registerAuthRoutes, setupAuth } from "./auth";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
+import yahooFinance from 'yahoo-finance2';
+
+// Initialize Yahoo Finance API
+const yahooFinanceInstance = new yahooFinance();
+
+// Extended WebSocket interface with symbols property
+interface ExtendedWebSocket extends WebSocket {
+  symbols?: string[];
+}
 
 const app = express();
 const httpServer = createServer(app);
 
 // Setup authentication
-setupAuth(app);
+// setupAuth(app);
 
 // WebSocket server for real-time updates
 const wss = new WebSocketServer({ server: httpServer });
-const clients = new Set<WebSocket>();
+const clients = new Set<ExtendedWebSocket>();
 
-wss.on('connection', (ws: WebSocket) => {
+wss.on('connection', (ws: ExtendedWebSocket) => {
   console.log('Client connected');
   clients.add(ws);
 
@@ -44,15 +53,21 @@ wss.on('connection', (ws: WebSocket) => {
 
 // Broadcast real-time price updates
 setInterval(async () => {
-  if (clients.size === 0) return;
+  if (clients.size === 0) {
+    console.log(`[${new Date().toISOString()}] No WebSocket clients connected, skipping price updates`);
+    return;
+  }
+
+  console.log(`[${new Date().toISOString()}] Broadcasting price updates to ${clients.size} client(s)`);
 
   try {
     // Get popular symbols for updates
     const popularSymbols = ['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'NVDA', 'AMZN'];
+    let updateCount = 0;
 
     for (const symbol of popularSymbols) {
       try {
-        const quote = await yahooFinance.quote(symbol);
+        const quote: any = await yahooFinance.quote(symbol);
         const update = {
           type: 'price_update',
           symbol: quote.symbol,
@@ -64,18 +79,27 @@ setInterval(async () => {
         };
 
         // Send to all clients subscribed to this symbol
+        let sentCount = 0;
         clients.forEach(client => {
           if (client.readyState === WebSocket.OPEN &&
               (!client.symbols || client.symbols.includes(symbol))) {
             client.send(JSON.stringify(update));
+            sentCount++;
           }
         });
-      } catch (error) {
-        console.error(`Error updating ${symbol}:`, error);
+
+        updateCount++;
+        console.log(`[${new Date().toISOString()}] Updated ${symbol}: $${quote.regularMarketPrice?.toFixed(2)} (${quote.regularMarketChangePercent?.toFixed(2)}%) - sent to ${sentCount} client(s)`);
+
+      } catch (error: any) {
+        console.error(`[${new Date().toISOString()}] Error updating ${symbol}:`, error.message);
       }
     }
+
+    console.log(`[${new Date().toISOString()}] Price update cycle completed: ${updateCount}/${popularSymbols.length} symbols updated`);
+
   } catch (error) {
-    console.error('Error in price update broadcast:', error);
+    console.error(`[${new Date().toISOString()}] Error in price update broadcast:`, error);
   }
 }, 5000); // Update every 5 seconds
 
@@ -133,8 +157,8 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  await registerRoutes(httpServer, app);
-  registerAuthRoutes(app);
+  await registerRoutes(httpServer, app, yahooFinanceInstance);
+  // registerAuthRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
@@ -165,7 +189,10 @@ app.use((req, res, next) => {
       host: "localhost",
     },
     () => {
-      log(`serving on port ${port}`);
+      log(`[${new Date().toISOString()}] Market Watcher server started on port ${port}`);
+      log(`[${new Date().toISOString()}] WebSocket server ready for connections`);
+      log(`[${new Date().toISOString()}] Real-time price updates enabled (5-second intervals)`);
+      log(`[${new Date().toISOString()}] Yahoo Finance API integration active`);
     },
   );
 })();

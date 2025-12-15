@@ -6,7 +6,8 @@ import { generateAISignal, type MarketData } from "./ai-strategies";
 
 export async function registerRoutes(
   httpServer: Server,
-  app: Express
+  app: Express,
+  yahooFinance: any
 ): Promise<Server> {
   // put application routes here
   // prefix all routes with /api
@@ -18,9 +19,12 @@ export async function registerRoutes(
 
   // Get stock quote
   app.get('/api/stocks/:symbol/quote', async (req, res) => {
+    const { symbol } = req.params;
+    console.log(`[${new Date().toISOString()}] Fetching quote for symbol: ${symbol}`);
+
     try {
-      const { symbol } = req.params;
-      const quote = await yahooFinance.quote(symbol);
+      const quote: any = await yahooFinance.quote(symbol);
+      console.log(`[${new Date().toISOString()}] Quote fetched successfully for ${symbol}: $${quote.regularMarketPrice?.toFixed(2)}`);
 
       // Format the response
       const formattedQuote = {
@@ -38,9 +42,10 @@ export async function registerRoutes(
         currency: quote.currency || 'USD'
       };
 
+      console.log(`[${new Date().toISOString()}] Returning formatted quote for ${symbol}`);
       res.json(formattedQuote);
     } catch (error) {
-      console.error('Error fetching stock quote:', error);
+      console.error(`[${new Date().toISOString()}] Error fetching stock quote for ${symbol}:`, error);
       res.status(500).json({ error: 'Failed to fetch stock quote' });
     }
   });
@@ -57,10 +62,10 @@ export async function registerRoutes(
         interval: interval as any,
       };
 
-      const history = await yahooFinance.historical(symbol, queryOptions);
+      const history: any = await yahooFinance.historical(symbol, queryOptions);
 
       // Format the response for the chart
-      const formattedHistory = history.map(item => ({
+      const formattedHistory = history.map((item: any) => ({
         time: new Date(item.date).toLocaleTimeString('en-US', {
           hour: 'numeric',
           minute: '2-digit',
@@ -96,22 +101,31 @@ export async function registerRoutes(
 
   // Get market movers (gainers/losers)
   app.get('/api/market/movers/:type', async (req, res) => {
+    const { type } = req.params; // 'gainers' or 'losers'
+    const { count = 20 } = req.query;
+
     try {
-      const { type } = req.params; // 'gainers' or 'losers'
-      const { count = 20 } = req.query;
+
+      console.log(`[${new Date().toISOString()}] Fetching ${type} market movers, count: ${count}`);
 
       // Get trending symbols first
-      const trending = await yahooFinance.trendingSymbols('en-us', { count: parseInt(count as string) * 3 });
+      const trending: any = await yahooFinance.trendingSymbols('en-us', { count: parseInt(count as string) * 3 });
+      console.log(`[${new Date().toISOString()}] Trending symbols fetched:`, trending.symbols?.length || 0);
 
       // Get quotes for trending symbols
       const symbols = trending.symbols?.slice(0, parseInt(count as string) * 2) || [];
+      console.log(`[${new Date().toISOString()}] Symbols to fetch quotes for:`, symbols.length);
+
       if (symbols.length === 0) {
+        console.log(`[${new Date().toISOString()}] No symbols found, returning empty array`);
         return res.json([]);
       }
 
       // Get quotes for these symbols
       const quotesPromises = symbols.map((symbol: any) => yahooFinance.quote(symbol.symbol || symbol));
       const quotes = await Promise.allSettled(quotesPromises);
+
+      console.log(`[${new Date().toISOString()}] Quotes fetched: ${quotes.filter(q => q.status === 'fulfilled').length} successful, ${quotes.filter(q => q.status === 'rejected').length} failed`);
 
       // Filter successful quotes and format data
       const validQuotes = quotes
@@ -138,10 +152,14 @@ export async function registerRoutes(
         return type === 'gainers' ? bChange - aChange : aChange - bChange;
       });
 
+      const result = sortedQuotes.slice(0, parseInt(count as string));
+      console.log(`[${new Date().toISOString()}] Returning ${result.length} ${type} results:`, result.map(r => `${r.symbol}: ${r.change}`));
+
       // Return top results
-      res.json(sortedQuotes.slice(0, parseInt(count as string)));
+      res.json(result);
     } catch (error) {
-      console.error('Error fetching market movers:', error);
+      console.error(`[${new Date().toISOString()}] Error fetching market movers:`, error);
+      console.log(`[${new Date().toISOString()}] Falling back to mock data for ${type}`);
       // Fallback to mock data
       const mockGainers = [
         { symbol: "NVDA", name: "NVIDIA Corp", price: 145.32, change: "+12.4%", vol: "45M" },
@@ -159,12 +177,15 @@ export async function registerRoutes(
 
   // Get trending symbols
   app.get('/api/market/trending', async (req, res) => {
+    const { count = 20 } = req.query;
+    console.log(`[${new Date().toISOString()}] Fetching trending symbols, count: ${count}`);
+
     try {
-      const { count = 10 } = req.query;
-      const trending = await yahooFinance.trendingSymbols('en-us', { count: parseInt(count as string) });
+      const trending: any = await yahooFinance.trendingSymbols('en-us', { count: parseInt(count as string) });
+      console.log(`[${new Date().toISOString()}] Trending symbols fetched successfully: ${trending.symbols?.length || 0} symbols`);
       res.json(trending);
     } catch (error) {
-      console.error('Error fetching trending symbols:', error);
+      console.error(`[${new Date().toISOString()}] Error fetching trending symbols:`, error);
       res.status(500).json({ error: 'Failed to fetch trending symbols' });
     }
   });
@@ -175,7 +196,7 @@ export async function registerRoutes(
       // Get major indices
       const indices = ['^GSPC', '^IXIC', '^DJI', '^RUT']; // S&P 500, NASDAQ, Dow Jones, Russell 2000
       const quotesPromises = indices.map(symbol => yahooFinance.quote(symbol));
-      const quotes = await Promise.allSettled(quotesPromises);
+      const quotes: PromiseSettledResult<any>[] = await Promise.allSettled(quotesPromises);
 
       const summary = quotes
         .filter((result): result is PromiseFulfilledResult<any> => result.status === 'fulfilled')

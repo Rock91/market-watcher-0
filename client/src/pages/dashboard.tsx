@@ -21,6 +21,7 @@ import {
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { motion, AnimatePresence } from "framer-motion";
 import { fetchStockQuote, fetchHistoricalData, fetchMarketMovers, type StockQuote } from "@/lib/api";
+import { useWebSocket, type PriceUpdate } from "@/hooks/use-websocket";
 
 // Mock Data Generators
 const generateStockData = (basePrice: number) => {
@@ -124,6 +125,11 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
+  // WebSocket connection for real-time updates
+  const { isConnected, priceUpdates, error: wsError } = useWebSocket('ws://localhost:3001', [
+    'AAPL', 'GOOGL', 'MSFT', 'TSLA', 'NVDA', 'AMZN', 'META', 'NFLX', 'GOOG'
+  ]);
+
   // Use ref to keep track of current balance inside interval closure
   const balanceRef = useRef(balance);
   const aiStrategyRef = useRef(aiStrategy);
@@ -179,6 +185,46 @@ export default function Dashboard() {
 
     loadInitialData();
   }, []);
+
+  // Handle real-time price updates from WebSocket
+  useEffect(() => {
+    if (priceUpdates.length > 0) {
+      const latestUpdate = priceUpdates[priceUpdates.length - 1];
+
+      // Update gainers list
+      setTopGainers(prev => prev.map(stock =>
+        stock.symbol === latestUpdate.symbol
+          ? {
+              ...stock,
+              price: latestUpdate.price,
+              change: `${latestUpdate.changePercent >= 0 ? '+' : ''}${(latestUpdate.changePercent * 100).toFixed(2)}%`
+            }
+          : stock
+      ));
+
+      // Update losers list
+      setTopLosers(prev => prev.map(stock =>
+        stock.symbol === latestUpdate.symbol
+          ? {
+              ...stock,
+              price: latestUpdate.price,
+              change: `${latestUpdate.changePercent >= 0 ? '+' : ''}${(latestUpdate.changePercent * 100).toFixed(2)}%`
+            }
+          : stock
+      ));
+
+      // Update selected stock if it's the one being updated
+      if (selectedStock && selectedStock.symbol === latestUpdate.symbol) {
+        setSelectedStock(prev => prev ? {
+          ...prev,
+          price: latestUpdate.price,
+          change: `${latestUpdate.changePercent >= 0 ? '+' : ''}${(latestUpdate.changePercent * 100).toFixed(2)}%`
+        } : null);
+      }
+
+      console.log(`Real-time update: ${latestUpdate.symbol} $${latestUpdate.price.toFixed(2)} (${(latestUpdate.changePercent * 100).toFixed(2)}%)`);
+    }
+  }, [priceUpdates]);
 
   // Function to refresh market data
   const refreshMarketData = async () => {
@@ -454,6 +500,10 @@ export default function Dashboard() {
             <Activity className="w-4 h-4 text-green-500" />
             <span>Bot Status: <span className="text-green-400 animate-pulse">ACTIVE</span></span>
           </div>
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+            <span>Live Data: <span className={isConnected ? 'text-green-400' : 'text-red-400'}>{isConnected ? 'CONNECTED' : 'DISCONNECTED'}</span></span>
+          </div>
         </div>
       </header>
 
@@ -713,15 +763,6 @@ export default function Dashboard() {
       </main>
     </div>
   );
-}
-
-interface Stock {
-  symbol: string;
-  name: string;
-  price: number;
-  change: string;
-  vol: string;
-  currency?: string;
 }
 
 function StockCard({ stock, isSelected, onClick, type }: { stock: Stock, isSelected: boolean, onClick: () => void, type: 'gainer' | 'loser' }) {
