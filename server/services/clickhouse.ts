@@ -1,16 +1,11 @@
 import { createClient } from '@clickhouse/client';
-
-const CLICKHOUSE_HOST = process.env.CLICKHOUSE_HOST || 'localhost';
-const CLICKHOUSE_PORT = process.env.CLICKHOUSE_PORT || '8123';
-const CLICKHOUSE_USERNAME = process.env.CLICKHOUSE_USERNAME || 'default';
-const CLICKHOUSE_PASSWORD = process.env.CLICKHOUSE_PASSWORD || '';
-const CLICKHOUSE_DATABASE = process.env.CLICKHOUSE_DATABASE || 'market_data';
+import { CLICKHOUSE_CONFIG } from '../config/database';
 
 export const clickhouseClient = createClient({
-  url: `http://${CLICKHOUSE_HOST}:${CLICKHOUSE_PORT}`,
-  username: CLICKHOUSE_USERNAME,
-  password: CLICKHOUSE_PASSWORD,
-  database: CLICKHOUSE_DATABASE,
+  url: `http://${CLICKHOUSE_CONFIG.host}:${CLICKHOUSE_CONFIG.port}`,
+  username: CLICKHOUSE_CONFIG.username,
+  password: CLICKHOUSE_CONFIG.password,
+  database: CLICKHOUSE_CONFIG.database,
 });
 
 // Initialize database and tables
@@ -24,13 +19,13 @@ export async function initializeClickHouse() {
 
     // Create database if it doesn't exist
     await clickhouseClient.exec({
-      query: `CREATE DATABASE IF NOT EXISTS ${CLICKHOUSE_DATABASE}`,
+      query: `CREATE DATABASE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}`,
     });
 
     // Create stock_quotes table for time-series price data
     await clickhouseClient.exec({
       query: `
-        CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_DATABASE}.stock_quotes (
+        CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}.stock_quotes (
           timestamp DateTime,
           symbol String,
           price Float64,
@@ -53,7 +48,7 @@ export async function initializeClickHouse() {
     // Create market_movers table for daily gainers/losers
     await clickhouseClient.exec({
       query: `
-        CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_DATABASE}.market_movers (
+        CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}.market_movers (
           timestamp DateTime,
           type String, -- 'gainers' or 'losers'
           symbol String,
@@ -71,7 +66,7 @@ export async function initializeClickHouse() {
     // Create stock_metadata table for static stock info
     await clickhouseClient.exec({
       query: `
-        CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_DATABASE}.stock_metadata (
+        CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}.stock_metadata (
           symbol String,
           name String,
           sector String,
@@ -96,7 +91,7 @@ export async function initializeClickHouse() {
 export async function storeStockQuote(quote: any) {
   try {
     await clickhouseClient.insert({
-      table: `${CLICKHOUSE_DATABASE}.stock_quotes`,
+      table: `${CLICKHOUSE_CONFIG.database}.stock_quotes`,
       values: [{
         timestamp: new Date(),
         symbol: quote.symbol,
@@ -134,7 +129,7 @@ export async function storeMarketMovers(type: 'gainers' | 'losers', movers: any[
     }));
 
     await clickhouseClient.insert({
-      table: `${CLICKHOUSE_DATABASE}.market_movers`,
+      table: `${CLICKHOUSE_CONFIG.database}.market_movers`,
       values,
       format: 'JSONEachRow',
     });
@@ -153,7 +148,7 @@ export async function getStockHistory(symbol: string, days: number = 30) {
     const result = await clickhouseClient.query({
       query: `
         SELECT *
-        FROM ${CLICKHOUSE_DATABASE}.stock_quotes
+        FROM ${CLICKHOUSE_CONFIG.database}.stock_quotes
         WHERE symbol = {symbol:String}
         AND timestamp >= now() - INTERVAL {days:UInt32} DAY
         ORDER BY timestamp DESC
@@ -174,7 +169,7 @@ export async function getLatestMarketMovers(type: 'gainers' | 'losers', limit: n
     const result = await clickhouseClient.query({
       query: `
         SELECT *
-        FROM ${CLICKHOUSE_DATABASE}.market_movers
+        FROM ${CLICKHOUSE_CONFIG.database}.market_movers
         WHERE type = {type:String}
         AND timestamp >= today()
         ORDER BY timestamp DESC, rank ASC

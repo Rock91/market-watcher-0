@@ -1,15 +1,17 @@
 import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes";
-// import { registerAuthRoutes, setupAuth } from "./auth";
-import { serveStatic } from "./static";
 import { createServer } from "http";
-import { WebSocketServer, WebSocket } from "ws";
-import yahooFinance from 'yahoo-finance2';
-import { initializeClickHouse, storeStockQuote, storeMarketMovers } from "./clickhouse";
+import { WebSocketServer } from "ws";
 
-// Initialize Yahoo Finance API
-const yahooFinanceInstance = new yahooFinance();
+// Import organized modules
+import apiRoutes from './api/routes';
+import { handleConnection } from './websocket/handlers';
+import { PriceBroadcaster } from './websocket/broadcaster';
+import { ExtendedWebSocket } from './websocket/types';
+import { requestLogger, errorHandler } from './middleware';
+import { serveStatic } from "./static";
+import { initializeClickHouse } from './services/clickhouse';
+import { log } from './utils/helpers';
 
 // Extended WebSocket interface with symbols property
 interface ExtendedWebSocket extends WebSocket {
@@ -19,38 +21,21 @@ interface ExtendedWebSocket extends WebSocket {
 const app = express();
 const httpServer = createServer(app);
 
+// Middleware
+app.use(express.json());
+app.use(requestLogger);
+
 // Setup authentication
 // setupAuth(app);
 
 // WebSocket server for real-time updates
 const wss = new WebSocketServer({ server: httpServer });
 const clients = new Set<ExtendedWebSocket>();
+let priceBroadcaster: PriceBroadcaster;
 
+// WebSocket connection handling
 wss.on('connection', (ws: ExtendedWebSocket) => {
-  console.log('Client connected');
-  clients.add(ws);
-
-  ws.on('message', (message) => {
-    try {
-      const data = JSON.parse(message.toString());
-      if (data.type === 'subscribe' && data.symbols) {
-        ws.symbols = data.symbols;
-        console.log(`Client subscribed to: ${data.symbols.join(', ')}`);
-      }
-    } catch (error) {
-      console.error('WebSocket message error:', error);
-    }
-  });
-
-  ws.on('close', () => {
-    console.log('Client disconnected');
-    clients.delete(ws);
-  });
-
-  ws.on('error', (error) => {
-    console.error('WebSocket error:', error);
-    clients.delete(ws);
-  });
+  handleConnection(ws, clients);
 });
 
 // Broadcast real-time price updates and market movers
@@ -201,54 +186,16 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
-export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
-
-  console.log(`${formattedTime} [${source}] ${message}`);
-}
-
-app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      log(logLine);
-    }
-  });
-
-  next();
-});
-
 (async () => {
-  await registerRoutes(httpServer, app, yahooFinanceInstance);
-  // registerAuthRoutes(app);
+  // Register API routes
+  app.use('/api', apiRoutes);
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+  // Error handling middleware
+  app.use(errorHandler);
 
-    res.status(status).json({ message });
-    throw err;
-  });
+  // Initialize price broadcaster
+  priceBroadcaster = new PriceBroadcaster(clients);
+  priceBroadcaster.start();
 
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
