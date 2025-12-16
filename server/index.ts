@@ -10,7 +10,8 @@ import { PriceBroadcaster } from './websocket/broadcaster';
 import { ExtendedWebSocket } from './websocket/types';
 import { requestLogger, errorHandler } from './middleware';
 import { serveStatic } from "./static";
-import { initializeClickHouse } from './services/clickhouse';
+import { initializeClickHouse, storeStockQuote, storeMarketMovers } from './services/clickhouse';
+import { yahooFinanceInstance } from './services/yahooFinance';
 import { log } from './utils/helpers';
 
 // Extended WebSocket interface with symbols property
@@ -153,7 +154,10 @@ setInterval(async () => {
         console.log(`[${new Date().toISOString()}] Market movers updated: ${gainers.length} gainers, ${losers.length} losers - sent to ${moversSentCount} client(s)`);
 
         // Store market movers in ClickHouse (non-blocking)
-        storeMarketMovers(gainers, losers).catch((storageError: any) => {
+        Promise.all([
+          storeMarketMovers('gainers', gainers),
+          storeMarketMovers('losers', losers)
+        ]).catch((storageError: any) => {
           // Silently fail if ClickHouse is not available
           console.debug(`[${new Date().toISOString()}] ClickHouse storage failed for market movers (non-critical):`, storageError.message);
         });
