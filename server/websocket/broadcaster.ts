@@ -127,7 +127,10 @@ export class PriceBroadcaster {
       console.log(`[${new Date().toISOString()}] Market movers updated: ${gainers.length} gainers, ${losers.length} losers - sent to ${moversSentCount} client(s)`);
 
       // Store market movers in ClickHouse (non-blocking)
-      storeMarketMovers(gainers, losers).catch((storageError: any) => {
+      Promise.all([
+        storeMarketMovers('gainers', gainers),
+        storeMarketMovers('losers', losers)
+      ]).catch((storageError: any) => {
         // Silently fail if ClickHouse is not available
         console.debug(`[${new Date().toISOString()}] ClickHouse storage failed for market movers (non-critical):`, storageError.message);
       });
