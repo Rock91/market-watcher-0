@@ -6,15 +6,22 @@ export const clickhouseClient = createClient({
   username: CLICKHOUSE_CONFIG.username,
   password: CLICKHOUSE_CONFIG.password,
   database: CLICKHOUSE_CONFIG.database,
+  request_timeout: 5000, // 5 second timeout
+  max_open_connections: 10,
 });
 
 // Initialize database and tables
 export async function initializeClickHouse() {
   try {
-    console.log(`[${new Date().toISOString()}] Initializing ClickHouse database...`);
+    console.log(`[${new Date().toISOString()}] Initializing ClickHouse database at ${CLICKHOUSE_CONFIG.host}:${CLICKHOUSE_CONFIG.port}...`);
 
-    // Test connection first
-    await clickhouseClient.ping();
+    // Test connection first with timeout
+    await Promise.race([
+      clickhouseClient.ping(),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Connection timeout after 5 seconds')), 5000)
+      )
+    ]);
     console.log(`[${new Date().toISOString()}] ClickHouse connection successful`);
 
     // Create database if it doesn't exist
@@ -81,8 +88,14 @@ export async function initializeClickHouse() {
     });
 
     console.log(`[${new Date().toISOString()}] ClickHouse database initialized successfully`);
-  } catch (error) {
-    console.warn(`[${new Date().toISOString()}] ClickHouse initialization failed (server will continue without database):`, error.message || error);
+  } catch (error: any) {
+    const errorMsg = error?.message || String(error);
+    if (errorMsg.includes('socket hang up') || errorMsg.includes('ECONNREFUSED') || errorMsg.includes('timeout')) {
+      console.warn(`[${new Date().toISOString()}] ClickHouse is not available at ${CLICKHOUSE_CONFIG.host}:${CLICKHOUSE_CONFIG.port} (server will continue without database storage)`);
+      console.warn(`[${new Date().toISOString()}] To enable ClickHouse: install and start ClickHouse server, or set CLICKHOUSE_HOST environment variable`);
+    } else {
+      console.warn(`[${new Date().toISOString()}] ClickHouse initialization failed (server will continue without database):`, errorMsg);
+    }
     // Don't throw error - allow server to continue without ClickHouse
   }
 }
