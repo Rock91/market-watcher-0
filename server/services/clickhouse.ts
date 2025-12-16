@@ -1,12 +1,18 @@
 import { createClient } from '@clickhouse/client';
 import { CLICKHOUSE_CONFIG } from '../config/database';
 
+// Determine protocol based on port (8443 is HTTPS for ClickHouse Cloud)
+const isSecurePort = CLICKHOUSE_CONFIG.port === '8443' || CLICKHOUSE_CONFIG.port === '9440';
+const protocol = isSecurePort ? 'https' : 'http';
+
+// Create client without database first (we'll create the database in initialization)
+// Use 'default' database for initial connection
 export const clickhouseClient = createClient({
-  url: `http://${CLICKHOUSE_CONFIG.host}:${CLICKHOUSE_CONFIG.port}`,
+  url: `${protocol}://${CLICKHOUSE_CONFIG.host}:${CLICKHOUSE_CONFIG.port}`,
   username: CLICKHOUSE_CONFIG.username,
   password: CLICKHOUSE_CONFIG.password,
-  database: CLICKHOUSE_CONFIG.database,
-  request_timeout: 5000, // 5 second timeout
+  database: 'default', // Use default database initially
+  request_timeout: 10000, // 10 second timeout for cloud connections
   max_open_connections: 10,
 });
 
@@ -24,10 +30,24 @@ export async function initializeClickHouse() {
     ]);
     console.log(`[${new Date().toISOString()}] ClickHouse connection successful`);
 
-    // Create database if it doesn't exist
-    await clickhouseClient.exec({
-      query: `CREATE DATABASE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}`,
-    });
+    // Create database if it doesn't exist (using default database connection)
+    try {
+      await clickhouseClient.exec({
+        query: `CREATE DATABASE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}`,
+      });
+      console.log(`[${new Date().toISOString()}] Database '${CLICKHOUSE_CONFIG.database}' created or already exists`);
+    } catch (dbError: any) {
+      // If database creation fails, log but continue (might already exist or permission issue)
+      console.warn(`[${new Date().toISOString()}] Database creation warning:`, dbError.message);
+      // Try to verify database exists by querying it
+      try {
+        await clickhouseClient.query({
+          query: `SELECT 1 FROM system.databases WHERE name = '${CLICKHOUSE_CONFIG.database}'`,
+        });
+      } catch (verifyError) {
+        throw new Error(`Database '${CLICKHOUSE_CONFIG.database}' does not exist and could not be created: ${dbError.message}`);
+      }
+    }
 
     // Create stock_quotes table for time-series price data
     await clickhouseClient.exec({
@@ -89,11 +109,28 @@ export async function initializeClickHouse() {
 
     console.log(`[${new Date().toISOString()}] ClickHouse database initialized successfully`);
   } catch (error: any) {
+
     const errorMsg = error?.message || String(error);
+    const errorCode = (error as any)?.code;
+    const errorType = (error as any)?.type;
+    
     if (errorMsg.includes('socket hang up') || errorMsg.includes('ECONNREFUSED') || errorMsg.includes('timeout')) {
       console.warn(`[${new Date().toISOString()}] ClickHouse is not available at ${CLICKHOUSE_CONFIG.host}:${CLICKHOUSE_CONFIG.port} (server will continue without database storage)`);
       console.warn(`[${new Date().toISOString()}] To enable ClickHouse: install and start ClickHouse server, or set CLICKHOUSE_HOST environment variable`);
+    } else if (errorCode === '81' || errorType === 'UNKNOWN_DATABASE' || errorMsg.includes('does not exist')) {
+      console.warn(`[${new Date().toISOString()}] ClickHouse database '${CLICKHOUSE_CONFIG.database}' does not exist. Attempting to create it...`);
+      // Try to create the database one more time
+      try {
+        await clickhouseClient.exec({
+          query: `CREATE DATABASE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}`,
+        });
+        console.log(`[${new Date().toISOString()}] Database '${CLICKHOUSE_CONFIG.database}' created successfully. Please restart the server to complete initialization.`);
+      } catch (createError: any) {
+        console.warn(`[${new Date().toISOString()}] Failed to create database: ${createError.message}`);
+        console.warn(`[${new Date().toISOString()}] Please create the database '${CLICKHOUSE_CONFIG.database}' manually in ClickHouse, or check your permissions.`);
+      }
     } else {
+      console.error(error);
       console.warn(`[${new Date().toISOString()}] ClickHouse initialization failed (server will continue without database):`, errorMsg);
     }
     // Don't throw error - allow server to continue without ClickHouse

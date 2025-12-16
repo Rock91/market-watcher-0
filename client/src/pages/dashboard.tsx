@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { motion, AnimatePresence } from "framer-motion";
-import { fetchStockQuote, fetchHistoricalData, fetchMarketMovers, type StockQuote } from "@/lib/api";
+import { fetchStockQuote, fetchHistoricalData, fetchMarketMovers, fetchTrendingSymbols, type StockQuote } from "@/lib/api";
 import { useWebSocket, type PriceUpdate, type MarketMover } from "@/hooks/use-websocket";
 
 // Mock Data Generators
@@ -126,7 +126,11 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
 
   // WebSocket connection for real-time updates
-  const { isConnected, priceUpdates, marketMovers, error: wsError } = useWebSocket('ws://localhost:3001', [
+  // Use the same origin as the current page (works in both dev and prod)
+  const wsUrl = typeof window !== 'undefined' 
+    ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}` 
+    : 'ws://localhost:3000';
+  const { isConnected, priceUpdates, marketMovers, error: wsError } = useWebSocket(wsUrl, [
     'AAPL', 'GOOGL', 'MSFT', 'TSLA', 'NVDA', 'AMZN', 'META', 'NFLX', 'GOOG'
   ]);
 
@@ -143,17 +147,42 @@ export default function Dashboard() {
     aiStrategyRef.current = aiStrategy;
   }, [aiStrategy]);
 
-  // Load initial market data
+  // Load initial market data - call all APIs on load
   useEffect(() => {
     const loadInitialData = async () => {
       try {
         setLoading(true);
         setError(null);
 
-        const [gainers, losers] = await Promise.all([
+        console.log('[Dashboard] Loading all market data on page load...');
+
+        // Popular stocks to pre-fetch
+        const popularSymbols = ['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'NVDA', 'AMZN', 'META', 'NFLX'];
+
+        // Call main APIs in parallel
+        const [gainers, losers, trending] = await Promise.all([
           fetchMarketMovers('gainers', 20),
-          fetchMarketMovers('losers', 20)
+          fetchMarketMovers('losers', 20),
+          fetchTrendingSymbols(20)
         ]);
+
+        // Pre-fetch quotes for popular stocks (non-blocking, don't wait for all)
+        const popularQuotesPromises = popularSymbols.map(symbol => 
+          fetchStockQuote(symbol).catch(err => {
+            console.warn(`Failed to fetch quote for ${symbol}:`, err);
+            return null;
+          })
+        );
+        
+        // Wait for popular quotes (but don't block if some fail)
+        const popularQuotes = await Promise.all(popularQuotesPromises);
+
+        console.log('[Dashboard] Market data loaded:', {
+          gainers: gainers.length,
+          losers: losers.length,
+          trending: trending.symbols?.length || 0,
+          popularQuotes: popularQuotes.filter(q => q !== null).length
+        });
 
         setTopGainers(gainers);
         setTopLosers(losers);
@@ -162,6 +191,18 @@ export default function Dashboard() {
         if (gainers.length > 0) {
           setSelectedStock(gainers[0]);
         }
+
+        // Log trending symbols for debugging
+        if (trending.symbols && trending.symbols.length > 0) {
+          console.log('[Dashboard] Trending symbols:', trending.symbols.map((s: any) => s.symbol).join(', '));
+        }
+
+        // Log popular stock quotes for debugging
+        const successfulQuotes = popularQuotes.filter(q => q !== null);
+        if (successfulQuotes.length > 0) {
+          console.log('[Dashboard] Pre-fetched quotes:', successfulQuotes.map((q: any) => `${q.symbol}: $${q.price?.toFixed(2)}`).join(', '));
+        }
+
       } catch (err) {
         console.error('Error loading initial data:', err);
         setError('Failed to load market data. Using demo mode.');
@@ -249,19 +290,42 @@ export default function Dashboard() {
     }
   }, [priceUpdates]);
 
-  // Function to refresh market data
+  // Function to refresh market data - calls all APIs
   const refreshMarketData = async () => {
     try {
       setRefreshing(true);
       setError(null);
 
-      const [gainers, losers] = await Promise.all([
+      console.log('[Dashboard] Refreshing all market data...');
+
+      // Popular stocks to pre-fetch
+      const popularSymbols = ['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'NVDA', 'AMZN', 'META', 'NFLX'];
+
+      // Call all APIs in parallel
+      const [gainers, losers, trending] = await Promise.all([
         fetchMarketMovers('gainers', 20),
-        fetchMarketMovers('losers', 20)
+        fetchMarketMovers('losers', 20),
+        fetchTrendingSymbols(20)
       ]);
+
+      // Pre-fetch quotes for popular stocks
+      const popularQuotesPromises = popularSymbols.map(symbol => 
+        fetchStockQuote(symbol).catch(err => {
+          console.warn(`Failed to fetch quote for ${symbol}:`, err);
+          return null;
+        })
+      );
+      const popularQuotes = await Promise.all(popularQuotesPromises);
 
       setTopGainers(gainers);
       setTopLosers(losers);
+
+      console.log('[Dashboard] Market data refreshed:', {
+        gainers: gainers.length,
+        losers: losers.length,
+        trending: trending.symbols?.length || 0,
+        popularQuotes: popularQuotes.filter(q => q !== null).length
+      });
     } catch (err) {
       console.error('Error refreshing market data:', err);
       setError('Failed to refresh market data');
