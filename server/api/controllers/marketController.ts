@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { getMarketMovers } from '../../services/yahooFinance';
-import { getLatestMarketMovers } from '../../services/clickhouse';
+import { getLatestMarketMovers, storeMarketMovers } from '../../services/clickhouse';
 
 // Get market movers (gainers or losers)
 export async function getMarketMoversController(req: Request, res: Response) {
@@ -8,10 +8,25 @@ export async function getMarketMoversController(req: Request, res: Response) {
   const { count = 20 } = req.query;
 
   try {
-    console.log(`[${new Date().toISOString()}] Fetching ${type} market movers, count: ${count}`);
-    const result = await getMarketMovers(type as 'gainers' | 'losers', parseInt(count as string));
-    console.log(`[${new Date().toISOString()}] Returning ${result.length} ${type} results`);
-    res.json(result);
+    // First, try to get data from ClickHouse
+    const cachedMovers = await getLatestMarketMovers(type as 'gainers' | 'losers', parseInt(count as string));
+
+    if (cachedMovers.length > 0) {
+      console.log(`[${new Date().toISOString()}] Returning cached ${type} market movers`);
+      return res.json(cachedMovers);
+    }
+
+    // If not in cache, fetch from Yahoo Finance
+    console.log(`[${new Date().toISOString()}] Fetching ${type} market movers from Yahoo Finance, count: ${count}`);
+    const newMovers = await getMarketMovers(type as 'gainers' | 'losers', parseInt(count as string));
+
+    // Store in ClickHouse for future requests
+    if (newMovers.length > 0) {
+      await storeMarketMovers(type as 'gainers' | 'losers', newMovers);
+    }
+
+    console.log(`[${new Date().toISOString()}] Returning ${newMovers.length} ${type} results`);
+    res.json(newMovers);
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error fetching market movers:`, error);
     // Fallback to mock data
@@ -35,13 +50,33 @@ export async function getTrendingSymbolsController(req: Request, res: Response) 
   console.log(`[${new Date().toISOString()}] Fetching trending symbols, count: ${count}`);
 
   try {
-    // Use screener API for day gainers as trending symbols
-    const screen = await getMarketMovers('gainers', Math.ceil(parseInt(count as string) / 2));
-    console.log(`[${new Date().toISOString()}] Trending symbols fetched successfully: ${screen.length} symbols`);
+    // First, try to get data from ClickHouse
+    const cachedMovers = await getLatestMarketMovers('gainers', parseInt(count as string));
+
+    if (cachedMovers.length > 0) {
+      console.log(`[${new Date().toISOString()}] Returning cached trending symbols`);
+      const trending = {
+        symbols: cachedMovers.map((quote: any) => ({
+          symbol: quote.symbol,
+          name: quote.name,
+          price: quote.price
+        }))
+      };
+      return res.json(trending);
+    }
+
+    // If not in cache, fetch from Yahoo Finance
+    const newMovers = await getMarketMovers('gainers', Math.ceil(parseInt(count as string) / 2));
+    console.log(`[${new Date().toISOString()}] Trending symbols fetched successfully: ${newMovers.length} symbols`);
+
+    // Store in ClickHouse for future requests
+    if (newMovers.length > 0) {
+      await storeMarketMovers('gainers', newMovers);
+    }
 
     // Format as trending symbols format
     const trending = {
-      symbols: screen.map((quote: any) => ({
+      symbols: newMovers.map((quote: any) => ({
         symbol: quote.symbol,
         name: quote.name,
         price: quote.price
