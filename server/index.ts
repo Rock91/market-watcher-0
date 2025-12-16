@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from "express";
+import cors from "cors";
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
 
@@ -21,6 +22,16 @@ interface ExtendedWebSocket extends WebSocket {
 
 const app = express();
 const httpServer = createServer(app);
+
+// CORS middleware - allow requests from client
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' 
+    ? process.env.CLIENT_URL || 'http://localhost:3000'
+    : true, // Allow all origins in development
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
 // Middleware
 app.use(express.json());

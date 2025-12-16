@@ -22,9 +22,18 @@ export interface ChartDataPoint {
   price: number;
 }
 
+// Get API base URL - uses PORT from environment (injected via Vite)
+const getApiBaseUrl = (): string => {
+  // Get port from Vite env (injected from server PORT env var)
+  const apiPort = import.meta.env.VITE_API_PORT || '3000';
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+  return `http://${hostname}:${apiPort}`;
+};
+
 // Fetch stock quote
 export const fetchStockQuote = async (symbol: string) => {
-  const response = await fetch(`/api/stocks/${symbol}/quote`);
+  const apiUrl = getApiBaseUrl();
+  const response = await fetch(`${apiUrl}/api/stocks/${symbol}/quote`);
   if (!response.ok) throw new Error('Failed to fetch stock quote');
   return response.json();
 };
@@ -34,9 +43,10 @@ export const fetchHistoricalData = async (symbol: string, days: number = 30) => 
   const endDate = new Date();
   const startDate = new Date();
   startDate.setDate(endDate.getDate() - days);
+  const apiUrl = getApiBaseUrl();
 
   const response = await fetch(
-    `/api/stocks/${symbol}/history?period1=${startDate.toISOString()}&period2=${endDate.toISOString()}&interval=5m`
+    `${apiUrl}/api/stocks/${symbol}/history?period1=${startDate.toISOString()}&period2=${endDate.toISOString()}&interval=5m`
   );
   if (!response.ok) throw new Error('Failed to fetch historical data');
   const data = await response.json();
@@ -54,21 +64,24 @@ export const fetchHistoricalData = async (symbol: string, days: number = 30) => 
 
 // Fetch market movers
 export const fetchMarketMovers = async (type: 'gainers' | 'losers', count: number = 20): Promise<StockQuote[]> => {
-  const response = await fetch(`/api/market/movers/${type}?count=${count}`);
+  const apiUrl = getApiBaseUrl();
+  const response = await fetch(`${apiUrl}/api/market/movers/${type}?count=${count}`);
   if (!response.ok) throw new Error('Failed to fetch market movers');
   return response.json();
 };
 
 // Fetch trending symbols
 export const fetchTrendingSymbols = async (count: number = 10) => {
-  const response = await fetch(`/api/market/trending?count=${count}`);
+  const apiUrl = getApiBaseUrl();
+  const response = await fetch(`${apiUrl}/api/market/trending?count=${count}`);
   if (!response.ok) throw new Error('Failed to fetch trending symbols');
   return response.json();
 };
 
 // Fetch market summary
 export const fetchMarketSummary = async () => {
-  const response = await fetch('/api/market/summary');
+  const apiUrl = getApiBaseUrl();
+  const response = await fetch(`${apiUrl}/api/market/summary`);
   if (!response.ok) throw new Error('Failed to fetch market summary');
   return response.json();
 };

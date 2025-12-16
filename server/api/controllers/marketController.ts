@@ -13,20 +13,39 @@ export async function getMarketMoversController(req: Request, res: Response) {
 
     if (cachedMovers.length > 0) {
       console.log(`[${new Date().toISOString()}] Returning cached ${type} market movers`);
-      return res.json(cachedMovers);
+      // Transform ClickHouse format to expected format
+      const transformedMovers = cachedMovers.map((mover: any) => ({
+        symbol: mover.symbol,
+        name: mover.name,
+        price: mover.price,
+        change: `${mover.change_percent >= 0 ? '+' : ''}${(mover.change_percent * 100).toFixed(2)}%`,
+        vol: 'N/A', // Volume not stored in ClickHouse market_movers table
+        currency: 'USD'
+      }));
+      return res.json(transformedMovers);
     }
 
     // If not in cache, fetch from Yahoo Finance
     console.log(`[${new Date().toISOString()}] Fetching ${type} market movers from Yahoo Finance, count: ${count}`);
     const newMovers = await getMarketMovers(type as 'gainers' | 'losers', parseInt(count as string));
 
-    // Store in ClickHouse for future requests
+    // Transform to expected format for frontend
+    const formattedMovers = newMovers.map((mover: any) => ({
+      symbol: mover.symbol,
+      name: mover.name,
+      price: mover.price,
+      change: `${mover.changePercent >= 0 ? '+' : ''}${(mover.changePercent * 100).toFixed(2)}%`,
+      vol: mover.volume ? `${(mover.volume / 1000000).toFixed(1)}M` : 'N/A',
+      currency: mover.currency || 'USD'
+    }));
+
+    // Store in ClickHouse for future requests (store original format)
     if (newMovers.length > 0) {
       await storeMarketMovers(type as 'gainers' | 'losers', newMovers);
     }
 
-    console.log(`[${new Date().toISOString()}] Returning ${newMovers.length} ${type} results`);
-    res.json(newMovers);
+    console.log(`[${new Date().toISOString()}] Returning ${formattedMovers.length} ${type} results`);
+    res.json(formattedMovers);
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error fetching market movers:`, error);
     // Fallback to mock data

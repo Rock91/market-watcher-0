@@ -23,6 +23,10 @@ export default defineConfig({
         ]
       : []),
   ],
+  define: {
+    // Inject PORT from environment into client code
+    'import.meta.env.VITE_API_PORT': JSON.stringify(process.env.PORT || '3000'),
+  },
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "client", "src"),
