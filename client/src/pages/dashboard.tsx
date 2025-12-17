@@ -586,15 +586,15 @@ export default function Dashboard() {
       <main className="flex-1 p-6 grid grid-cols-12 gap-6 overflow-hidden">
         
         {/* Left Sidebar - Watchlists */}
-        <aside className="col-span-3 flex flex-col gap-6 h-[calc(100vh-7rem)]">
-          <Tabs defaultValue="gainers" className="w-full flex-1 flex flex-col">
-            <TabsList className="w-full grid grid-cols-2 bg-black/20 border border-white/10 rounded-none mb-4">
+        <aside className="col-span-3 flex flex-col gap-4 h-[calc(100vh-7rem)] overflow-hidden">
+          <Tabs defaultValue="gainers" className="w-full flex-1 flex flex-col min-h-0">
+            <TabsList className="w-full grid grid-cols-2 bg-black/20 border border-white/10 rounded-none flex-shrink-0">
               <TabsTrigger value="gainers" className="rounded-none data-[state=active]:bg-primary/20 data-[state=active]:text-primary font-orbitron text-xs">TOP GAINERS</TabsTrigger>
               <TabsTrigger value="losers" className="rounded-none data-[state=active]:bg-destructive/20 data-[state=active]:text-destructive font-orbitron text-xs">TOP LOSERS</TabsTrigger>
             </TabsList>
 
             {/* Refresh Button */}
-            <div className="mb-4">
+            <div className="py-3 flex-shrink-0">
               <Button
                 onClick={refreshMarketData}
                 disabled={refreshing}
@@ -607,8 +607,8 @@ export default function Dashboard() {
               </Button>
             </div>
             
-            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
-              <TabsContent value="gainers" className="mt-0 space-y-2">
+            <TabsContent value="gainers" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden">
+              <div className="h-full overflow-y-auto pr-2 custom-scrollbar space-y-2">
                 {loading ? (
                   <div className="text-center text-muted-foreground py-4">Loading market data...</div>
                 ) : (
@@ -622,8 +622,10 @@ export default function Dashboard() {
                     />
                   ))
                 )}
-              </TabsContent>
-              <TabsContent value="losers" className="mt-0 space-y-2">
+              </div>
+            </TabsContent>
+            <TabsContent value="losers" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden">
+              <div className="h-full overflow-y-auto pr-2 custom-scrollbar space-y-2">
                 {loading ? (
                   <div className="text-center text-muted-foreground py-4">Loading market data...</div>
                 ) : (
@@ -637,8 +639,8 @@ export default function Dashboard() {
                     />
                   ))
                 )}
-              </TabsContent>
-            </div>
+              </div>
+            </TabsContent>
           </Tabs>
         </aside>
 
