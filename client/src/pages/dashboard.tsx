@@ -407,7 +407,7 @@ export default function Dashboard() {
       if (!selectedStock) return;
 
       try {
-        const historicalData = await fetchHistoricalData(selectedStock.symbol, 1); // 1 day of 5-minute data
+        const historicalData = await fetchHistoricalData(selectedStock.symbol, 30); // 30 days of daily data
         if (historicalData.length > 0) {
           setChartData(historicalData);
         } else {
@@ -452,7 +452,7 @@ export default function Dashboard() {
 
       try {
         // Get real market data for AI analysis
-        const historicalData = await fetchHistoricalData(randomStock.symbol, 1); // 1 day of data
+        const historicalData = await fetchHistoricalData(randomStock.symbol, 30); // 30 days of daily data for AI analysis
         const currentPrice = randomStock.price;
         const historicalPrices = historicalData.map((d: any) => d.price);
 
@@ -577,7 +577,8 @@ export default function Dashboard() {
     if (chartData.length === 0 || !selectedStock) return;
 
     // Only update chart if we're using generated data (fallback)
-    const isGeneratedData = chartData.length === 20 && chartData[0]?.time?.includes(':');
+    // Generated data has times like "9:00", "9:30" while real data has dates like "Dec 17"
+    const isGeneratedData = chartData.length > 0 && chartData[0]?.time?.includes(':');
 
     if (!isGeneratedData) return;
 
