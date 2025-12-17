@@ -7,7 +7,14 @@ import {
   WebSocketEventType
 } from './types';
 import { getStockQuote, getMarketMovers, yahooFinanceInstance } from '../services/yahooFinance';
-import { storeStockQuote, storeMarketMovers, getHistoricalData as getDbHistoricalData } from '../services/clickhouse';
+import { 
+  storeStockQuotes, 
+  getLatestMarketMovers, 
+  storeMarketMovers, 
+  getLatestTrendingSymbols,
+  storeTrendingSymbols,
+  getHistoricalData as getDbHistoricalData 
+} from '../services/clickhouse';
 import { generateAISignal, type MarketData } from '../services/ai-strategies';
 import { isSubscribedToEvent, isSubscribedToSymbol } from './handlers';
 
@@ -89,6 +96,7 @@ export class PriceBroadcaster {
     if (subscribedClients.length === 0) return;
 
     let updateCount = 0;
+    const quotesToStore: any[] = [];
 
     for (const symbol of POPULAR_SYMBOLS) {
       try {
@@ -117,12 +125,16 @@ export class PriceBroadcaster {
 
         if (sentCount > 0) {
           updateCount++;
-          // Store in database
-          storeStockQuote(quote).catch(() => {});
+          quotesToStore.push(quote);
         }
       } catch (error: any) {
         // Silent fail for individual symbols
       }
+    }
+
+    // Batch insert (faster + lower ClickHouse overhead)
+    if (quotesToStore.length > 0) {
+      storeStockQuotes(quotesToStore).catch(() => {});
     }
 
     if (updateCount > 0) {
@@ -136,10 +148,28 @@ export class PriceBroadcaster {
     if (subscribedClients.length === 0) return;
 
     try {
-      const [gainers, losers] = await Promise.all([
-        getMarketMovers('gainers', 20),
-        getMarketMovers('losers', 20)
+      // Prefer ClickHouse (single snapshot) to reduce Yahoo calls and avoid DB duplicates
+      let [gainersDb, losersDb] = await Promise.all([
+        getLatestMarketMovers('gainers', 20),
+        getLatestMarketMovers('losers', 20),
       ]);
+
+      let gainers: any[] = gainersDb || [];
+      let losers: any[] = losersDb || [];
+
+      // Fallback to Yahoo Finance if DB has no recent snapshot
+      if (gainers.length === 0 || losers.length === 0) {
+        const [gainersY, losersY] = await Promise.all([
+          getMarketMovers('gainers', 20),
+          getMarketMovers('losers', 20),
+        ]);
+        gainers = gainersY;
+        losers = losersY;
+
+        // Store ONLY on cache miss (avoid inserting duplicates every 30s)
+        if (gainers.length > 0) storeMarketMovers('gainers', gainers).catch(() => {});
+        if (losers.length > 0) storeMarketMovers('losers', losers).catch(() => {});
+      }
 
       // Note: changePercent is already a percentage value (e.g., -11.85 for -11.85%)
       const update: MarketMoversUpdateMessage = {
@@ -148,19 +178,19 @@ export class PriceBroadcaster {
           symbol: g.symbol,
           name: g.name,
           price: g.price,
-          change: `${g.changePercent >= 0 ? '+' : ''}${g.changePercent.toFixed(2)}%`,
-          changePercent: g.changePercent,
+          change: `${(g.changePercent ?? g.change_percent ?? 0) >= 0 ? '+' : ''}${Number(g.changePercent ?? g.change_percent ?? 0).toFixed(2)}%`,
+          changePercent: Number(g.changePercent ?? g.change_percent ?? 0),
           volume: g.volume ? `${(g.volume / 1000000).toFixed(1)}M` : undefined,
-          currency: g.currency
+          currency: g.currency || 'USD'
         })),
         losers: losers.map(l => ({
           symbol: l.symbol,
           name: l.name,
           price: l.price,
-          change: `${l.changePercent >= 0 ? '+' : ''}${l.changePercent.toFixed(2)}%`,
-          changePercent: l.changePercent,
+          change: `${(l.changePercent ?? l.change_percent ?? 0) >= 0 ? '+' : ''}${Number(l.changePercent ?? l.change_percent ?? 0).toFixed(2)}%`,
+          changePercent: Number(l.changePercent ?? l.change_percent ?? 0),
           volume: l.volume ? `${(l.volume / 1000000).toFixed(1)}M` : undefined,
-          currency: l.currency
+          currency: l.currency || 'USD'
         })),
         timestamp: Date.now()
       };
@@ -171,12 +201,6 @@ export class PriceBroadcaster {
       });
 
       console.log(`[${new Date().toISOString()}] [Broadcaster] Market movers: ${gainers.length} gainers, ${losers.length} losers to ${subscribedClients.length} clients`);
-
-      // Store in database
-      Promise.all([
-        storeMarketMovers('gainers', gainers),
-        storeMarketMovers('losers', losers)
-      ]).catch(() => {});
 
     } catch (error: any) {
       console.error(`[${new Date().toISOString()}] [Broadcaster] Market movers error:`, error.message);
@@ -283,17 +307,34 @@ export class PriceBroadcaster {
     if (subscribedClients.length === 0) return;
 
     try {
-      const trending = await yahooFinanceInstance.trendingSymbols('US', { count: 20 });
+      // Prefer ClickHouse snapshot first
+      let symbols = await getLatestTrendingSymbols(20);
 
-      if (trending?.quotes && trending.quotes.length > 0) {
-        const trendingUpdate: TrendingUpdateMessage = {
-          type: 'trending_update',
-          symbols: trending.quotes.map((quote: any, index: number) => ({
+      // Fallback to Yahoo Finance if DB has no recent snapshot
+      if (!symbols || symbols.length === 0) {
+        const trending = await yahooFinanceInstance.trendingSymbols('US', { count: 20 });
+        if (trending?.quotes && trending.quotes.length > 0) {
+          symbols = trending.quotes.map((quote: any, index: number) => ({
             symbol: quote.symbol,
             name: quote.shortName || quote.longName || quote.symbol,
             rank: index + 1,
             price: quote.regularMarketPrice,
-            changePercent: quote.regularMarketChangePercent
+            changePercent: quote.regularMarketChangePercent,
+          }));
+          // Store ONLY on cache miss
+          storeTrendingSymbols(trending.quotes).catch(() => {});
+        }
+      }
+
+      if (symbols && symbols.length > 0) {
+        const trendingUpdate: TrendingUpdateMessage = {
+          type: 'trending_update',
+          symbols: symbols.map((s: any) => ({
+            symbol: s.symbol,
+            name: s.name,
+            rank: s.rank,
+            price: s.price,
+            changePercent: s.changePercent ?? s.change_percent,
           })),
           timestamp: Date.now()
         };
@@ -303,7 +344,7 @@ export class PriceBroadcaster {
           client.send(JSON.stringify(trendingUpdate));
         });
 
-        console.log(`[${new Date().toISOString()}] [Broadcaster] Trending: ${trending.quotes.length} symbols to ${subscribedClients.length} clients`);
+        console.log(`[${new Date().toISOString()}] [Broadcaster] Trending: ${symbols.length} symbols to ${subscribedClients.length} clients`);
       }
     } catch (error: any) {
       console.error(`[${new Date().toISOString()}] [Broadcaster] Trending error:`, error.message);

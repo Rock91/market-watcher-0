@@ -172,13 +172,15 @@ export async function initializeClickHouse() {
   }
 }
 
-// Store stock quote data
-export async function storeStockQuote(quote: any) {
+// Store multiple stock quotes in a single ClickHouse insert (much faster than per-row inserts)
+export async function storeStockQuotes(quotes: any[], timestamp: Date = new Date()) {
   try {
+    if (!quotes || quotes.length === 0) return;
+
     await clickhouseClient.insert({
       table: `${CLICKHOUSE_CONFIG.database}.stock_quotes`,
-      values: [{
-        timestamp: new Date(),
+      values: quotes.map((quote: any) => ({
+        timestamp,
         symbol: quote.symbol,
         price: quote.price || 0,
         change: quote.change || 0,
@@ -186,25 +188,30 @@ export async function storeStockQuote(quote: any) {
         volume: quote.volume || 0,
         market_cap: quote.marketCap || 0,
         pe_ratio: quote.peRatio || 0,
-        day_high: 0, // Not provided in current data
-        day_low: 0,  // Not provided in current data
-        previous_close: 0, // Not provided in current data
-        currency: 'USD'
-      }],
+        day_high: quote.dayHigh || 0,
+        day_low: quote.dayLow || 0,
+        previous_close: quote.previousClose || 0,
+        currency: quote.currency || 'USD',
+      })),
       format: 'JSONEachRow',
     });
   } catch (error) {
-    // Silently fail if ClickHouse is not available - don't log errors
-    // The calling code will handle this gracefully
+    // Silently fail if ClickHouse is not available
     return;
   }
+}
+
+// Store stock quote data
+export async function storeStockQuote(quote: any) {
+  return storeStockQuotes([quote]);
 }
 
 // Store market movers data
 export async function storeMarketMovers(type: 'gainers' | 'losers', movers: any[]) {
   try {
+    const timestamp = new Date(); // single snapshot timestamp for all rows
     const values = movers.map((mover, index) => ({
-      timestamp: new Date(),
+      timestamp,
       type,
       symbol: mover.symbol,
       name: mover.name,
@@ -253,11 +260,18 @@ export async function getLatestMarketMovers(type: 'gainers' | 'losers', limit: n
   try {
     const result = await clickhouseClient.query({
       query: `
+        /* Return the latest snapshot (single timestamp) to avoid mixing rows across multiple fetch cycles */
+        WITH (
+          SELECT max(timestamp)
+          FROM ${CLICKHOUSE_CONFIG.database}.market_movers
+          WHERE type = {type:String}
+            AND timestamp >= toDateTime(today())
+        ) AS latest_ts
         SELECT *
         FROM ${CLICKHOUSE_CONFIG.database}.market_movers
         WHERE type = {type:String}
-        AND timestamp >= today()
-        ORDER BY timestamp DESC, rank ASC
+          AND timestamp = latest_ts
+        ORDER BY rank ASC
         LIMIT {limit:UInt32}
       `,
       query_params: { type, limit },
@@ -267,6 +281,27 @@ export async function getLatestMarketMovers(type: 'gainers' | 'losers', limit: n
     return result.json();
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error querying market movers (${type}):`, error);
+    return [];
+  }
+}
+
+// Get market movers history (multiple snapshots)
+export async function getMarketMoversHistory(type: 'gainers' | 'losers', limit: number = 100) {
+  try {
+    const result = await clickhouseClient.query({
+      query: `
+        SELECT *
+        FROM ${CLICKHOUSE_CONFIG.database}.market_movers
+        WHERE type = {type:String}
+        ORDER BY timestamp DESC, rank ASC
+        LIMIT {limit:UInt32}
+      `,
+      query_params: { type, limit },
+      format: 'JSONEachRow',
+    });
+    return result.json();
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error querying market movers history (${type}):`, error);
     return [];
   }
 }
@@ -327,8 +362,9 @@ export async function storeTrendingSymbols(symbols: any[]) {
   try {
     if (!symbols || symbols.length === 0) return;
 
+    const timestamp = new Date(); // single snapshot timestamp
     const values = symbols.map((item: any, index: number) => ({
-      timestamp: new Date(),
+      timestamp,
       symbol: item.symbol,
       name: item.shortName || item.longName || item.symbol,
       rank: index + 1,
@@ -352,10 +388,16 @@ export async function getLatestTrendingSymbols(limit: number = 20) {
   try {
     const result = await clickhouseClient.query({
       query: `
+        /* Return the latest snapshot (single timestamp) */
+        WITH (
+          SELECT max(timestamp)
+          FROM ${CLICKHOUSE_CONFIG.database}.trending_symbols
+          WHERE timestamp >= now() - INTERVAL 1 HOUR
+        ) AS latest_ts
         SELECT symbol, name, rank
         FROM ${CLICKHOUSE_CONFIG.database}.trending_symbols
-        WHERE timestamp >= now() - INTERVAL 1 HOUR
-        ORDER BY timestamp DESC, rank ASC
+        WHERE timestamp = latest_ts
+        ORDER BY rank ASC
         LIMIT {limit:UInt32}
       `,
       query_params: { limit },
@@ -450,7 +492,7 @@ export async function getAllTrackedSymbols(): Promise<string[]> {
       query: `
         SELECT DISTINCT symbol
         FROM ${CLICKHOUSE_CONFIG.database}.market_movers
-        WHERE timestamp >= today() - INTERVAL 7 DAY
+        WHERE timestamp >= now() - INTERVAL 7 DAY
         ORDER BY symbol
       `,
       format: 'JSONEachRow',
@@ -473,7 +515,7 @@ export async function getSymbolsNeedingBackfill(targetDays: number = 365): Promi
         WITH recent_movers AS (
           SELECT DISTINCT symbol
           FROM ${CLICKHOUSE_CONFIG.database}.market_movers
-          WHERE timestamp >= today() - INTERVAL 7 DAY
+          WHERE timestamp >= now() - INTERVAL 7 DAY
         ),
         historical_coverage AS (
           SELECT 

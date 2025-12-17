@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { getMarketMovers, yahooFinanceInstance } from '../../services/yahooFinance';
 import { 
   getLatestMarketMovers, 
+  getMarketMoversHistory,
   storeMarketMovers,
   getLatestTrendingSymbols,
   storeTrendingSymbols
@@ -142,7 +143,7 @@ export async function getMarketMoversHistoryController(req: Request, res: Respon
 
     console.log(`[${new Date().toISOString()}] Fetching ClickHouse market movers, type: ${type}, limit ${limit}`);
 
-    const history = await getLatestMarketMovers(type as 'gainers' | 'losers', parseInt(limit as string));
+    const history = await getMarketMoversHistory(type as 'gainers' | 'losers', parseInt(limit as string));
 
     console.log(`[${new Date().toISOString()}] Retrieved ${history.length} market movers records`);
     res.json(history);

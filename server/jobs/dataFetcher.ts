@@ -14,6 +14,7 @@ import {
 } from '../services/yahooFinance';
 import {
   storeStockQuote,
+  storeStockQuotes,
   storeMarketMovers,
   storeHistoricalData,
   storeTrendingSymbols,
@@ -43,11 +44,12 @@ async function fetchAndStoreQuotes() {
   
   let successCount = 0;
   let errorCount = 0;
+  const quotesToStore: any[] = [];
 
   for (const symbol of POPULAR_SYMBOLS) {
     try {
       const quote = await getStockQuote(symbol);
-      await storeStockQuote(quote);
+      quotesToStore.push(quote);
       successCount++;
     } catch (error) {
       errorCount++;
@@ -56,6 +58,11 @@ async function fetchAndStoreQuotes() {
     
     // Small delay to avoid rate limiting
     await sleep(100);
+  }
+
+  // Batch insert to ClickHouse (significantly reduces overhead)
+  if (quotesToStore.length > 0) {
+    await storeStockQuotes(quotesToStore);
   }
 
   console.log(`[${new Date().toISOString()}] [DataFetcher] Quotes fetched: ${successCount} success, ${errorCount} errors`);
