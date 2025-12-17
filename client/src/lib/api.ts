@@ -52,13 +52,16 @@ export const fetchHistoricalData = async (symbol: string, days: number = 30) => 
   if (!response.ok) throw new Error('Failed to fetch historical data');
   const data = await response.json();
 
-  // Convert to chart format - use date for daily data
+  console.log(`[API] Raw historical data for ${symbol}:`, data?.slice(0, 2));
+
+  // Server already returns formatted data with 'time' and 'price' fields
+  // Map to ensure we have the expected format for the chart
   return data.map((item: any) => ({
-    time: new Date(item.date).toLocaleDateString('en-US', {
+    time: item.time || new Date(item.date).toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric'
     }),
-    price: item.close
+    price: item.price || item.close || 0
   }));
 };
 

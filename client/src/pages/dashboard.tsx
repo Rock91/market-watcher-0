@@ -407,8 +407,10 @@ export default function Dashboard() {
       if (!selectedStock) return;
 
       try {
+        console.log(`[Chart] Fetching historical data for ${selectedStock.symbol}...`);
         const historicalData = await fetchHistoricalData(selectedStock.symbol, 30); // 30 days of daily data
-        if (historicalData.length > 0) {
+        console.log(`[Chart] Received ${historicalData?.length || 0} data points for ${selectedStock.symbol}`, historicalData?.slice(0, 2));
+        if (historicalData && historicalData.length > 0) {
           setChartData(historicalData);
         } else {
           // Fallback to generated data if no historical data

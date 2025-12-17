@@ -97,6 +97,8 @@ export async function getHistoricalDataController(req: Request, res: Response) {
     console.log(`[${new Date().toISOString()}] Cache miss for ${symbol} historical data, fetching from Yahoo Finance...`);
     
     const history: any = await getHistoricalData(symbol, startDate, endDate, interval as string);
+    
+    console.log(`[${new Date().toISOString()}] Yahoo Finance returned ${history?.length || 0} records for ${symbol}`);
 
     // Store in database for future requests
     if (history && history.length > 0) {
@@ -118,6 +120,7 @@ export async function getHistoricalDataController(req: Request, res: Response) {
       volume: item.volume
     }));
 
+    console.log(`[${new Date().toISOString()}] Returning ${formattedHistory.length} historical data points for ${symbol}`);
     res.json(formattedHistory);
   } catch (error) {
     console.error('Error fetching historical data:', error);
