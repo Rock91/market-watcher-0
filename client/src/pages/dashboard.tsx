@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { motion, AnimatePresence } from "framer-motion";
-import { fetchStockQuote, fetchHistoricalData, fetchMarketMovers, fetchTrendingSymbols, type StockQuote } from "@/lib/api";
+import { fetchStockQuote, fetchHistoricalData, fetchMarketMovers, fetchTrendingSymbols, fetchAISignal, type StockQuote } from "@/lib/api";
 import { useWebSocket, type PriceUpdate, type MarketMover } from "@/hooks/use-websocket";
 
 // Mock Data Generators
@@ -390,26 +390,15 @@ export default function Dashboard() {
         const historicalPrices = historicalData.map((d: any) => d.price);
 
         // Generate AI signal using advanced strategies via API
-        const response = await fetch('/api/ai/signal', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            symbol: randomStock.symbol,
-            price: currentPrice,
-            volume: parseInt(randomStock.vol.replace('M', '')) * 1000000,
-            historicalPrices,
-            strategy: aiStrategyRef.current,
-            sentimentScore: (Math.random() - 0.5) * 2 // Mock sentiment score
-          })
+        const signal = await fetchAISignal({
+          symbol: randomStock.symbol,
+          price: currentPrice,
+          volume: parseInt(randomStock.vol.replace('M', '')) * 1000000,
+          historicalPrices,
+          strategy: aiStrategyRef.current,
+          sentimentScore: (Math.random() - 0.5) * 2 // Mock sentiment score
         });
 
-        if (!response.ok) {
-          throw new Error('Failed to generate AI signal');
-        }
-
-        const signal = await response.json();
         const { action, confidence, reason } = signal;
 
         // Calculate simulated profit based on confidence and action

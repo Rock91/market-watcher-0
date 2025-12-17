@@ -23,7 +23,7 @@ export interface ChartDataPoint {
 }
 
 // Get API base URL - uses PORT from environment (injected via Vite)
-const getApiBaseUrl = (): string => {
+export const getApiBaseUrl = (): string => {
   // Get port from Vite env (injected from server PORT env var)
   const apiPort = import.meta.env.VITE_API_PORT || '3000';
   const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
@@ -83,5 +83,34 @@ export const fetchMarketSummary = async () => {
   const apiUrl = getApiBaseUrl();
   const response = await fetch(`${apiUrl}/api/market/summary`);
   if (!response.ok) throw new Error('Failed to fetch market summary');
+  return response.json();
+};
+
+// AI Signal generation
+export interface AISignalRequest {
+  symbol: string;
+  price: number;
+  volume: number;
+  historicalPrices: number[];
+  strategy: string;
+  sentimentScore: number;
+}
+
+export interface AISignalResponse {
+  action: 'BUY' | 'SELL' | 'HOLD';
+  confidence: number;
+  reason: string;
+}
+
+export const fetchAISignal = async (data: AISignalRequest): Promise<AISignalResponse> => {
+  const apiUrl = getApiBaseUrl();
+  const response = await fetch(`${apiUrl}/api/ai/signal`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data)
+  });
+  if (!response.ok) throw new Error('Failed to generate AI signal');
   return response.json();
 };
