@@ -411,3 +411,99 @@ export async function isDataFresh(table: string, minutes: number = 5): Promise<b
     return false;
   }
 }
+
+// Get the date range of existing historical data for a symbol
+export async function getHistoricalDataRange(symbol: string): Promise<{ minDate: Date | null; maxDate: Date | null; count: number }> {
+  try {
+    const result = await clickhouseClient.query({
+      query: `
+        SELECT 
+          min(date) as min_date,
+          max(date) as max_date,
+          count() as count
+        FROM ${CLICKHOUSE_CONFIG.database}.historical_data
+        WHERE symbol = {symbol:String}
+      `,
+      query_params: { symbol },
+      format: 'JSONEachRow',
+    });
+
+    const data: any = await result.json();
+    if (data.length > 0 && data[0].count > 0) {
+      return {
+        minDate: new Date(data[0].min_date),
+        maxDate: new Date(data[0].max_date),
+        count: Number(data[0].count)
+      };
+    }
+    return { minDate: null, maxDate: null, count: 0 };
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error checking historical data range for ${symbol}:`, error);
+    return { minDate: null, maxDate: null, count: 0 };
+  }
+}
+
+// Get all unique symbols from market movers
+export async function getAllTrackedSymbols(): Promise<string[]> {
+  try {
+    const result = await clickhouseClient.query({
+      query: `
+        SELECT DISTINCT symbol
+        FROM ${CLICKHOUSE_CONFIG.database}.market_movers
+        WHERE timestamp >= today() - INTERVAL 7 DAY
+        ORDER BY symbol
+      `,
+      format: 'JSONEachRow',
+    });
+
+    const data: any = await result.json();
+    return data.map((row: any) => row.symbol);
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error getting tracked symbols:`, error);
+    return [];
+  }
+}
+
+// Get symbols that need historical data backfill
+export async function getSymbolsNeedingBackfill(targetDays: number = 365): Promise<string[]> {
+  try {
+    // Get all symbols from recent market movers
+    const result = await clickhouseClient.query({
+      query: `
+        WITH recent_movers AS (
+          SELECT DISTINCT symbol
+          FROM ${CLICKHOUSE_CONFIG.database}.market_movers
+          WHERE timestamp >= today() - INTERVAL 7 DAY
+        ),
+        historical_coverage AS (
+          SELECT 
+            symbol,
+            min(date) as min_date,
+            max(date) as max_date,
+            count() as record_count
+          FROM ${CLICKHOUSE_CONFIG.database}.historical_data
+          WHERE symbol IN (SELECT symbol FROM recent_movers)
+          GROUP BY symbol
+        )
+        SELECT rm.symbol
+        FROM recent_movers rm
+        LEFT JOIN historical_coverage hc ON rm.symbol = hc.symbol
+        WHERE hc.record_count IS NULL 
+           OR hc.record_count < {minRecords:UInt32}
+           OR hc.min_date > today() - INTERVAL {targetDays:UInt32} DAY
+        ORDER BY rm.symbol
+      `,
+      query_params: { 
+        targetDays, 
+        minRecords: Math.floor(targetDays * 0.7) // At least 70% of expected trading days
+      },
+      format: 'JSONEachRow',
+    });
+
+    const data: any = await result.json();
+    return data.map((row: any) => row.symbol);
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error getting symbols needing backfill:`, error);
+    return [];
+  }
+}
