@@ -79,51 +79,34 @@ export async function getMarketMovers(type: 'gainers' | 'losers', count: number 
 }
 
 // Get historical data
-export type Interval = '1m' | '2m' | '5m' | '15m' | '30m' | '60m' | '90m' | '1h' | '1d' | '5d' | '1wk' | '1mo' | '3mo';
-export async function getHistoricalData(symbol: string, period1?: Date, period2?: Date, interval: string = '5m') {
-  // Ensure dates are valid
-  const startDate = period1 || new Date(Date.now() - 24 * 60 * 60 * 1000); // 24 hours ago
+// Note: yahoo-finance2's historical() only supports '1d', '1wk', '1mo' intervals
+export type Interval = '1d' | '1wk' | '1mo';
+
+export async function getHistoricalData(symbol: string, period1?: Date, period2?: Date, interval: string = '1d') {
+  // Ensure dates are valid - default to 30 days of history for daily data
+  const startDate = period1 || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30 days ago
   const endDate = period2 || new Date();
   
-  // For intraday intervals, use a shorter time period (max 7 days for intraday)
-  const isIntraday = ['1m', '2m', '5m', '15m', '30m', '60m', '90m', '1h'].includes(interval);
+  // yahoo-finance2 historical only supports: '1d', '1wk', '1mo'
+  // Map any unsupported intervals to '1d'
+  const validIntervals = ['1d', '1wk', '1mo'];
+  const actualInterval = validIntervals.includes(interval) ? interval : '1d';
   
-  if (isIntraday) {
-    // Limit intraday requests to last 7 days
-    const maxDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const actualStartDate = startDate < maxDaysAgo ? maxDaysAgo : startDate;
-    
-    const queryOptions: any = {
-      period1: actualStartDate,
-      period2: endDate,
-      interval: interval as any,
-    };
+  if (interval !== actualInterval) {
+    console.warn(`[Yahoo Finance] Interval '${interval}' not supported for historical data. Using '${actualInterval}' instead.`);
+  }
 
-    try {
-      return await yahooFinanceInstance.historical(symbol, queryOptions);
-    } catch (error) {
-      console.error(`Error fetching historical data for ${symbol}:`, error);
-      // Fallback to daily data if intraday fails
-      const fallbackOptions: any = {
-        period1: actualStartDate,
-        period2: endDate,
-        interval: '1d',
-      };
-      return await yahooFinanceInstance.historical(symbol, fallbackOptions);
-    }
-  } else {
-    // For daily/weekly/monthly intervals
-    const queryOptions: any = {
-      period1: startDate,
-      period2: endDate,
-      interval: interval as any,
-    };
+  const queryOptions: any = {
+    period1: startDate,
+    period2: endDate,
+    interval: actualInterval,
+  };
 
-    try {
-      return await yahooFinanceInstance.historical(symbol, queryOptions);
-    } catch (error) {
-      console.error(`Error fetching historical data for ${symbol}:`, error);
-      throw error;
-    }
+  try {
+    const data = await yahooFinanceInstance.historical(symbol, queryOptions);
+    return data;
+  } catch (error) {
+    console.error(`Error fetching historical data for ${symbol}:`, error);
+    throw error;
   }
 }

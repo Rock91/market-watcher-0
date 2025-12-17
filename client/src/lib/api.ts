@@ -39,6 +39,7 @@ export const fetchStockQuote = async (symbol: string) => {
 };
 
 // Fetch historical data
+// Note: yahoo-finance2 only supports daily ('1d'), weekly ('1wk'), monthly ('1mo') intervals
 export const fetchHistoricalData = async (symbol: string, days: number = 30) => {
   const endDate = new Date();
   const startDate = new Date();
@@ -46,17 +47,16 @@ export const fetchHistoricalData = async (symbol: string, days: number = 30) => 
   const apiUrl = getApiBaseUrl();
 
   const response = await fetch(
-    `${apiUrl}/api/stocks/${symbol}/history?period1=${startDate.toISOString()}&period2=${endDate.toISOString()}&interval=5m`
+    `${apiUrl}/api/stocks/${symbol}/history?period1=${startDate.toISOString()}&period2=${endDate.toISOString()}&interval=1d`
   );
   if (!response.ok) throw new Error('Failed to fetch historical data');
   const data = await response.json();
 
-  // Convert to chart format
+  // Convert to chart format - use date for daily data
   return data.map((item: any) => ({
-    time: new Date(item.date).toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: false
+    time: new Date(item.date).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric'
     }),
     price: item.close
   }));
