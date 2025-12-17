@@ -273,6 +273,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (priceUpdates.size > 0) {
       // Update all stocks with latest prices from WebSocket
+      // Note: changePercent is already a percentage value (e.g., -11.85 for -11.85%)
       priceUpdates.forEach((update, symbol) => {
         // Update gainers list
         setTopGainers(prev => prev.map(stock =>
@@ -280,7 +281,7 @@ export default function Dashboard() {
             ? {
                 ...stock,
                 price: update.price,
-                change: `${update.changePercent >= 0 ? '+' : ''}${(update.changePercent * 100).toFixed(2)}%`
+                change: `${update.changePercent >= 0 ? '+' : ''}${update.changePercent.toFixed(2)}%`
               }
             : stock
         ));
@@ -291,7 +292,7 @@ export default function Dashboard() {
             ? {
                 ...stock,
                 price: update.price,
-                change: `${update.changePercent >= 0 ? '+' : ''}${(update.changePercent * 100).toFixed(2)}%`
+                change: `${update.changePercent >= 0 ? '+' : ''}${update.changePercent.toFixed(2)}%`
               }
             : stock
         ));
@@ -301,7 +302,7 @@ export default function Dashboard() {
           setSelectedStock(prev => prev ? {
             ...prev,
             price: update.price,
-            change: `${update.changePercent >= 0 ? '+' : ''}${(update.changePercent * 100).toFixed(2)}%`
+            change: `${update.changePercent >= 0 ? '+' : ''}${update.changePercent.toFixed(2)}%`
           } : null);
         }
       });

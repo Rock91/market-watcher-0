@@ -141,13 +141,14 @@ export class PriceBroadcaster {
         getMarketMovers('losers', 20)
       ]);
 
+      // Note: changePercent is already a percentage value (e.g., -11.85 for -11.85%)
       const update: MarketMoversUpdateMessage = {
         type: 'market_movers_update',
         gainers: gainers.map(g => ({
           symbol: g.symbol,
           name: g.name,
           price: g.price,
-          change: `${g.changePercent >= 0 ? '+' : ''}${(g.changePercent * 100).toFixed(2)}%`,
+          change: `${g.changePercent >= 0 ? '+' : ''}${g.changePercent.toFixed(2)}%`,
           changePercent: g.changePercent,
           volume: g.volume ? `${(g.volume / 1000000).toFixed(1)}M` : undefined,
           currency: g.currency
@@ -156,7 +157,7 @@ export class PriceBroadcaster {
           symbol: l.symbol,
           name: l.name,
           price: l.price,
-          change: `${l.changePercent >= 0 ? '+' : ''}${(l.changePercent * 100).toFixed(2)}%`,
+          change: `${l.changePercent >= 0 ? '+' : ''}${l.changePercent.toFixed(2)}%`,
           changePercent: l.changePercent,
           volume: l.volume ? `${(l.volume / 1000000).toFixed(1)}M` : undefined,
           currency: l.currency

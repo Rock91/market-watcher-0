@@ -19,11 +19,12 @@ export async function getMarketMoversController(req: Request, res: Response) {
     if (cachedMovers.length > 0) {
       console.log(`[${new Date().toISOString()}] Returning cached ${type} market movers`);
       // Transform ClickHouse format to expected format
+      // Note: change_percent is already a percentage value (e.g., -11.85 for -11.85%)
       const transformedMovers = cachedMovers.map((mover: any) => ({
         symbol: mover.symbol,
         name: mover.name,
         price: mover.price,
-        change: `${mover.change_percent >= 0 ? '+' : ''}${(mover.change_percent * 100).toFixed(2)}%`,
+        change: `${mover.change_percent >= 0 ? '+' : ''}${mover.change_percent.toFixed(2)}%`,
         vol: 'N/A', // Volume not stored in ClickHouse market_movers table
         currency: 'USD'
       }));
@@ -35,11 +36,12 @@ export async function getMarketMoversController(req: Request, res: Response) {
     const newMovers = await getMarketMovers(type as 'gainers' | 'losers', parseInt(count as string));
 
     // Transform to expected format for frontend
+    // Note: changePercent is already a percentage value (e.g., -11.85 for -11.85%)
     const formattedMovers = newMovers.map((mover: any) => ({
       symbol: mover.symbol,
       name: mover.name,
       price: mover.price,
-      change: `${mover.changePercent >= 0 ? '+' : ''}${(mover.changePercent * 100).toFixed(2)}%`,
+      change: `${mover.changePercent >= 0 ? '+' : ''}${mover.changePercent.toFixed(2)}%`,
       vol: mover.volume ? `${(mover.volume / 1000000).toFixed(1)}M` : 'N/A',
       currency: mover.currency || 'USD'
     }));
