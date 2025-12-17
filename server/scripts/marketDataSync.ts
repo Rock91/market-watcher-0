@@ -23,6 +23,7 @@ import {
   initializeClickHouse,
   storeStockQuote,
   storeMarketMovers,
+  storeTrackedSymbolsFromMovers,
   storeHistoricalData,
   getHistoricalDataRange,
   getAllTrackedSymbols,
@@ -75,6 +76,7 @@ async function fetchAllMarketMovers(): Promise<string[]> {
     const gainers = await getMarketMovers('gainers', 50);
     if (gainers.length > 0) {
       await storeMarketMovers('gainers', gainers);
+      await storeTrackedSymbolsFromMovers('gainers', gainers);
       gainers.forEach(g => allSymbols.push(g.symbol));
       log(`Stored ${gainers.length} gainers`);
     }
@@ -85,6 +87,7 @@ async function fetchAllMarketMovers(): Promise<string[]> {
     const losers = await getMarketMovers('losers', 50);
     if (losers.length > 0) {
       await storeMarketMovers('losers', losers);
+      await storeTrackedSymbolsFromMovers('losers', losers);
       losers.forEach(l => allSymbols.push(l.symbol));
       log(`Stored ${losers.length} losers`);
     }

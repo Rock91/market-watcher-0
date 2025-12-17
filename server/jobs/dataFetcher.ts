@@ -16,6 +16,7 @@ import {
   storeStockQuote,
   storeStockQuotes,
   storeMarketMovers,
+  storeTrackedSymbolsFromMovers,
   storeHistoricalData,
   storeTrendingSymbols,
   isDataFresh,
@@ -79,6 +80,7 @@ async function fetchAndStoreMovers() {
     const gainers = await getMarketMovers('gainers', 20);
     if (gainers.length > 0) {
       await storeMarketMovers('gainers', gainers);
+      await storeTrackedSymbolsFromMovers('gainers', gainers);
     }
 
     // Small delay between requests
@@ -88,6 +90,7 @@ async function fetchAndStoreMovers() {
     const losers = await getMarketMovers('losers', 20);
     if (losers.length > 0) {
       await storeMarketMovers('losers', losers);
+      await storeTrackedSymbolsFromMovers('losers', losers);
     }
 
     console.log(`[${new Date().toISOString()}] [DataFetcher] Market movers: ${gainers.length} gainers, ${losers.length} losers`);

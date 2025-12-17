@@ -146,6 +146,24 @@ export async function initializeClickHouse() {
       `,
     });
 
+    // Create tracked_symbols table (derived from market movers; drives historical backfill)
+    await clickhouseClient.exec({
+      query: `
+        CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}.tracked_symbols (
+          symbol LowCardinality(String),
+          name String,
+          last_source LowCardinality(String), -- e.g. 'market_movers'
+          last_type LowCardinality(String),   -- 'gainers' or 'losers'
+          last_rank UInt32,
+          last_seen DateTime,
+          INDEX symbol_bf symbol TYPE bloom_filter GRANULARITY 1
+        ) ENGINE = ReplacingMergeTree(last_seen)
+        PARTITION BY toYYYYMMDD(last_seen)
+        ORDER BY symbol
+        TTL last_seen + INTERVAL 30 DAY
+      `,
+    });
+
     // Best-effort: apply optimizations to existing tables (safe to ignore failures)
     const tryExec = async (query: string) => {
       try {
@@ -163,12 +181,16 @@ export async function initializeClickHouse() {
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.market_movers MODIFY COLUMN symbol LowCardinality(String)`);
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.historical_data MODIFY COLUMN symbol LowCardinality(String)`);
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.trending_symbols MODIFY COLUMN symbol LowCardinality(String)`);
+    await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.tracked_symbols MODIFY COLUMN symbol LowCardinality(String)`);
+    await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.tracked_symbols MODIFY COLUMN last_source LowCardinality(String)`);
+    await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.tracked_symbols MODIFY COLUMN last_type LowCardinality(String)`);
 
     // Bloom filter indexes can speed up symbol IN (...) and high-selectivity filters
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.stock_quotes ADD INDEX IF NOT EXISTS symbol_bf symbol TYPE bloom_filter GRANULARITY 1`);
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.market_movers ADD INDEX IF NOT EXISTS symbol_bf symbol TYPE bloom_filter GRANULARITY 1`);
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.historical_data ADD INDEX IF NOT EXISTS symbol_bf symbol TYPE bloom_filter GRANULARITY 1`);
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.trending_symbols ADD INDEX IF NOT EXISTS symbol_bf symbol TYPE bloom_filter GRANULARITY 1`);
+    await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.tracked_symbols ADD INDEX IF NOT EXISTS symbol_bf symbol TYPE bloom_filter GRANULARITY 1`);
 
     console.log(`[${new Date().toISOString()}] ClickHouse database initialized successfully`);
   } catch (error: any) {
@@ -259,6 +281,59 @@ export async function storeMarketMovers(type: 'gainers' | 'losers', movers: any[
     // Silently fail if ClickHouse is not available - don't log errors
     // The calling code will handle this gracefully
     return;
+  }
+}
+
+// Upsert tracked symbols based on market movers (drives historical backfill list)
+export async function storeTrackedSymbolsFromMovers(
+  type: 'gainers' | 'losers',
+  movers: any[],
+  source: string = 'market_movers',
+) {
+  try {
+    if (!movers || movers.length === 0) return;
+    const lastSeen = new Date();
+    const values = movers.map((mover, index) => ({
+      symbol: mover.symbol,
+      name: mover.name || mover.shortName || mover.longName || mover.symbol,
+      last_source: source,
+      last_type: type,
+      last_rank: index + 1,
+      last_seen: lastSeen,
+    }));
+
+    await clickhouseClient.insert({
+      table: `${CLICKHOUSE_CONFIG.database}.tracked_symbols`,
+      values,
+      format: 'JSONEachRow',
+    });
+  } catch (error) {
+    // Silently fail if ClickHouse is not available
+    return;
+  }
+}
+
+// Get tracked symbols from ClickHouse (de-duplicated)
+export async function getTrackedSymbols(days: number = 7, limit: number = 1000): Promise<Array<{ symbol: string; name?: string }>> {
+  try {
+    const result = await clickhouseClient.query({
+      query: `
+        SELECT
+          symbol,
+          anyLast(name) AS name
+        FROM ${CLICKHOUSE_CONFIG.database}.tracked_symbols
+        WHERE last_seen >= now() - INTERVAL {days:UInt32} DAY
+        GROUP BY symbol
+        ORDER BY symbol
+        LIMIT {limit:UInt32}
+      `,
+      query_params: { days, limit },
+      format: 'JSONEachRow',
+    });
+    return result.json();
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error getting tracked symbols:`, error);
+    return [];
   }
 }
 
@@ -518,9 +593,10 @@ export async function getAllTrackedSymbols(): Promise<string[]> {
   try {
     const result = await clickhouseClient.query({
       query: `
-        SELECT DISTINCT symbol
-        FROM ${CLICKHOUSE_CONFIG.database}.market_movers
-        WHERE timestamp >= now() - INTERVAL 7 DAY
+        SELECT symbol
+        FROM ${CLICKHOUSE_CONFIG.database}.tracked_symbols
+        WHERE last_seen >= now() - INTERVAL 7 DAY
+        GROUP BY symbol
         ORDER BY symbol
       `,
       format: 'JSONEachRow',
@@ -537,13 +613,14 @@ export async function getAllTrackedSymbols(): Promise<string[]> {
 // Get symbols that need historical data backfill
 export async function getSymbolsNeedingBackfill(targetDays: number = 365): Promise<string[]> {
   try {
-    // Get all symbols from recent market movers
+    // Use tracked_symbols as source-of-truth for "what shares should we keep history for"
     const result = await clickhouseClient.query({
       query: `
-        WITH recent_movers AS (
-          SELECT DISTINCT symbol
-          FROM ${CLICKHOUSE_CONFIG.database}.market_movers
-          WHERE timestamp >= now() - INTERVAL 7 DAY
+        WITH tracked AS (
+          SELECT symbol
+          FROM ${CLICKHOUSE_CONFIG.database}.tracked_symbols
+          WHERE last_seen >= now() - INTERVAL 7 DAY
+          GROUP BY symbol
         ),
         historical_coverage AS (
           SELECT 
@@ -552,16 +629,16 @@ export async function getSymbolsNeedingBackfill(targetDays: number = 365): Promi
             max(date) as max_date,
             count() as record_count
           FROM ${CLICKHOUSE_CONFIG.database}.historical_data
-          WHERE symbol IN (SELECT symbol FROM recent_movers)
+          WHERE symbol IN (SELECT symbol FROM tracked)
           GROUP BY symbol
         )
-        SELECT rm.symbol
-        FROM recent_movers rm
-        LEFT JOIN historical_coverage hc ON rm.symbol = hc.symbol
+        SELECT t.symbol
+        FROM tracked t
+        LEFT JOIN historical_coverage hc ON t.symbol = hc.symbol
         WHERE hc.record_count IS NULL 
            OR hc.record_count < {minRecords:UInt32}
            OR hc.min_date > today() - INTERVAL {targetDays:UInt32} DAY
-        ORDER BY rm.symbol
+        ORDER BY t.symbol
       `,
       query_params: { 
         targetDays, 
