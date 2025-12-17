@@ -138,8 +138,8 @@
     opacity: 0.8;
   }
 
-  /* Hide inactive tabs - Radix UI uses data-state attribute */
-  [data-state="inactive"] {
+  /* Hide ONLY inactive Radix Tabs panels (do NOT hide inactive triggers/buttons) */
+  [role="tabpanel"][data-state="inactive"] {
     display: none !important;
   }
 }
