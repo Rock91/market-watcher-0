@@ -21,7 +21,7 @@ import {
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { motion, AnimatePresence } from "framer-motion";
 import { fetchStockQuote, fetchHistoricalData, fetchMarketMovers, fetchTrendingSymbols, fetchAISignal, type StockQuote } from "@/lib/api";
-import { useWebSocket, type PriceUpdate, type MarketMover } from "@/hooks/use-websocket";
+import { useWebSocket, type PriceUpdate, type MarketMover, type AISignal, type TrendingSymbol } from "@/hooks/use-websocket";
 
 // Mock Data Generators
 const generateStockData = (basePrice: number) => {
@@ -125,14 +125,21 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  // WebSocket connection for real-time updates
-  // Use the same origin as the current page (works in both dev and prod)
-  const wsUrl = typeof window !== 'undefined' 
-    ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}` 
-    : 'ws://localhost:3000';
-  const { isConnected, priceUpdates, marketMovers, error: wsError } = useWebSocket(wsUrl, [
-    'AAPL', 'GOOGL', 'MSFT', 'TSLA', 'NVDA', 'AMZN', 'META', 'NFLX', 'GOOG'
-  ]);
+  // WebSocket connection for real-time updates with all event types
+  const { 
+    isConnected, 
+    priceUpdates, 
+    marketMovers, 
+    trendingSymbols,
+    aiSignals,
+    latestAISignal,
+    requestAISignal,
+    error: wsError 
+  } = useWebSocket({
+    symbols: ['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'NVDA', 'AMZN', 'META', 'NFLX', 'GOOG'],
+    events: ['price_update', 'market_movers_update', 'ai_signal', 'trending_update'],
+    autoConnect: true
+  });
 
   // Use ref to keep track of current balance inside interval closure
   const balanceRef = useRef(balance);
@@ -229,66 +236,122 @@ export default function Dashboard() {
 
   // Handle real-time market movers updates from WebSocket
   useEffect(() => {
-    if (marketMovers) {
-      console.log('Received real-time market movers update:', marketMovers.gainers.length, 'gainers,', marketMovers.losers.length, 'losers');
+    if (marketMovers && marketMovers.gainers && marketMovers.losers) {
+      console.log('[WebSocket] Market movers update:', marketMovers.gainers.length, 'gainers,', marketMovers.losers.length, 'losers');
       setTopGainers(marketMovers.gainers.map(mover => ({
         symbol: mover.symbol,
         name: mover.name,
         price: mover.price,
         change: mover.change,
-        vol: 'N/A', // Volume not included in market movers data
-        currency: 'USD'
+        vol: mover.volume || 'N/A',
+        currency: mover.currency || 'USD'
       })));
       setTopLosers(marketMovers.losers.map(mover => ({
         symbol: mover.symbol,
         name: mover.name,
         price: mover.price,
         change: mover.change,
-        vol: 'N/A', // Volume not included in market movers data
-        currency: 'USD'
+        vol: mover.volume || 'N/A',
+        currency: mover.currency || 'USD'
       })));
     }
   }, [marketMovers]);
 
+  // Handle real-time trending symbols updates from WebSocket
+  useEffect(() => {
+    if (trendingSymbols && trendingSymbols.length > 0) {
+      console.log('[WebSocket] Trending symbols update:', trendingSymbols.length, 'symbols');
+      // You can use trending symbols to highlight or show a separate section
+    }
+  }, [trendingSymbols]);
+
   // Handle real-time price updates from WebSocket
   useEffect(() => {
-    if (priceUpdates.length > 0) {
-      const latestUpdate = priceUpdates[priceUpdates.length - 1];
+    if (priceUpdates.size > 0) {
+      // Update all stocks with latest prices from WebSocket
+      priceUpdates.forEach((update, symbol) => {
+        // Update gainers list
+        setTopGainers(prev => prev.map(stock =>
+          stock.symbol === symbol
+            ? {
+                ...stock,
+                price: update.price,
+                change: `${update.changePercent >= 0 ? '+' : ''}${(update.changePercent * 100).toFixed(2)}%`
+              }
+            : stock
+        ));
 
-      // Update gainers list
-      setTopGainers(prev => prev.map(stock =>
-        stock.symbol === latestUpdate.symbol
-          ? {
-              ...stock,
-              price: latestUpdate.price,
-              change: `${latestUpdate.changePercent >= 0 ? '+' : ''}${(latestUpdate.changePercent * 100).toFixed(2)}%`
-            }
-          : stock
-      ));
+        // Update losers list
+        setTopLosers(prev => prev.map(stock =>
+          stock.symbol === symbol
+            ? {
+                ...stock,
+                price: update.price,
+                change: `${update.changePercent >= 0 ? '+' : ''}${(update.changePercent * 100).toFixed(2)}%`
+              }
+            : stock
+        ));
 
-      // Update losers list
-      setTopLosers(prev => prev.map(stock =>
-        stock.symbol === latestUpdate.symbol
-          ? {
-              ...stock,
-              price: latestUpdate.price,
-              change: `${latestUpdate.changePercent >= 0 ? '+' : ''}${(latestUpdate.changePercent * 100).toFixed(2)}%`
-            }
-          : stock
-      ));
+        // Update selected stock if it's the one being updated
+        if (selectedStock && selectedStock.symbol === symbol) {
+          setSelectedStock(prev => prev ? {
+            ...prev,
+            price: update.price,
+            change: `${update.changePercent >= 0 ? '+' : ''}${(update.changePercent * 100).toFixed(2)}%`
+          } : null);
+        }
+      });
+    }
+  }, [priceUpdates, selectedStock]);
 
-      // Update selected stock if it's the one being updated
-      if (selectedStock && selectedStock.symbol === latestUpdate.symbol) {
-        setSelectedStock(prev => prev ? {
-          ...prev,
-          price: latestUpdate.price,
-          change: `${latestUpdate.changePercent >= 0 ? '+' : ''}${(latestUpdate.changePercent * 100).toFixed(2)}%`
-        } : null);
+  // Handle real-time AI signals from WebSocket
+  useEffect(() => {
+    if (latestAISignal) {
+      const signal = latestAISignal;
+      
+      // Calculate simulated profit based on confidence and action
+      let profitPercent = (Math.random() * 7 - 2) / 100;
+      if (signal.action === "SELL") profitPercent = profitPercent * -1;
+      if (signal.action === "HOLD") profitPercent = 0;
+
+      // RISK MANAGEMENT: Dynamic based on confidence
+      let riskPercent = 0.01;
+      if (signal.confidence > 90) riskPercent = 0.025;
+      else if (signal.confidence > 80) riskPercent = 0.015;
+
+      const currentBalance = balanceRef.current;
+      const investment = currentBalance * riskPercent;
+      const simulatedProfit = investment * profitPercent;
+
+      const newLog: PredictionLog = {
+        id: Date.now(),
+        symbol: signal.symbol,
+        action: signal.action,
+        confidence: signal.confidence,
+        time: new Date().toLocaleTimeString(),
+        reason: `[WS] ${signal.reason} | Strategy: ${signal.strategy}`,
+        simulatedProfit
+      };
+
+      setLogs(prev => [newLog, ...prev].slice(0, 50));
+
+      // AUTO-TRADE LOGIC: If confidence > 75%, execute trade
+      if (signal.confidence > 75 && signal.action !== "HOLD") {
+        setBalance(prev => prev + simulatedProfit);
+        const newTransaction: Transaction = {
+          id: Date.now(),
+          symbol: signal.symbol,
+          action: signal.action as "BUY" | "SELL",
+          amount: investment,
+          profit: simulatedProfit,
+          time: new Date().toLocaleTimeString()
+        };
+        setTransactions(prev => [newTransaction, ...prev].slice(0, 50));
       }
 
-      console.log(`Real-time update: ${latestUpdate.symbol} $${latestUpdate.price.toFixed(2)} (${(latestUpdate.changePercent * 100).toFixed(2)}%)`);
+      console.log(`[WebSocket] AI Signal: ${signal.symbol} ${signal.action} (${signal.confidence.toFixed(1)}%) - ${signal.strategy}`);
     }
-  }, [priceUpdates]);
+  }, [latestAISignal]);
 
   // Function to refresh market data - calls all APIs
   const refreshMarketData = async () => {

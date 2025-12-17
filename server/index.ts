@@ -11,15 +11,9 @@ import { PriceBroadcaster } from './websocket/broadcaster';
 import { ExtendedWebSocket } from './websocket/types';
 import { requestLogger, errorHandler } from './middleware';
 import { serveStatic } from "./static";
-import { initializeClickHouse, storeStockQuote, storeMarketMovers } from './services/clickhouse';
-import { yahooFinanceInstance } from './services/yahooFinance';
+import { initializeClickHouse } from './services/clickhouse';
 import { log } from './utils/helpers';
 import { startDataFetcher } from './jobs/dataFetcher';
-
-// Extended WebSocket interface with symbols property
-interface ExtendedWebSocket extends WebSocket {
-  symbols?: string[];
-}
 
 const app = express();
 const httpServer = createServer(app);
@@ -38,9 +32,6 @@ app.use(cors({
 app.use(express.json());
 app.use(requestLogger);
 
-// Setup authentication
-// setupAuth(app);
-
 // WebSocket server for real-time updates
 const wss = new WebSocketServer({ server: httpServer });
 const clients = new Set<ExtendedWebSocket>();
@@ -51,140 +42,12 @@ wss.on('connection', (ws: ExtendedWebSocket) => {
   handleConnection(ws, clients);
 });
 
-// Broadcast real-time price updates and market movers
-let updateCounter = 0;
-setInterval(async () => {
-  if (clients.size === 0) {
-    console.log(`[${new Date().toISOString()}] No WebSocket clients connected, skipping updates`);
-    return;
+// Log WebSocket client count periodically
+setInterval(() => {
+  if (clients.size > 0) {
+    log(`[${new Date().toISOString()}] Active WebSocket clients: ${clients.size}`);
   }
-
-  console.log(`[${new Date().toISOString()}] Broadcasting updates to ${clients.size} client(s)`);
-
-  try {
-    // Get popular symbols for individual price updates (every 5 seconds)
-    const popularSymbols = ['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'NVDA', 'AMZN'];
-    let updateCount = 0;
-
-    // Send individual price updates for popular symbols
-    for (const symbol of popularSymbols) {
-      try {
-        const quote: any = await yahooFinanceInstance.quote(symbol);
-        const update = {
-          type: 'price_update',
-          symbol: quote.symbol,
-          price: quote.regularMarketPrice,
-          change: quote.regularMarketChange,
-          changePercent: quote.regularMarketChangePercent,
-          volume: quote.regularMarketVolume,
-          timestamp: Date.now()
-        };
-
-        // Send to all clients subscribed to this symbol
-        let sentCount = 0;
-        clients.forEach(client => {
-          if (client.readyState === WebSocket.OPEN &&
-              (!client.symbols || client.symbols.includes(symbol))) {
-            client.send(JSON.stringify(update));
-            sentCount++;
-          }
-        });
-
-        updateCount++;
-        console.log(`[${new Date().toISOString()}] Updated ${symbol}: $${quote.regularMarketPrice?.toFixed(2)} (${quote.regularMarketChangePercent?.toFixed(2)}%) - sent to ${sentCount} client(s)`);
-
-        // Store stock quote in ClickHouse (non-blocking)
-        storeStockQuote({
-          symbol: quote.symbol,
-          price: quote.regularMarketPrice || 0,
-          change: quote.regularMarketChange || 0,
-          changePercent: quote.regularMarketChangePercent || 0,
-          volume: quote.regularMarketVolume || 0,
-          marketCap: quote.marketCap || null,
-          peRatio: quote.trailingPE || null,
-          timestamp: new Date()
-        }).catch((storageError: any) => {
-          // Silently fail if ClickHouse is not available
-          console.debug(`[${new Date().toISOString()}] ClickHouse storage failed for ${symbol} (non-critical):`, storageError.message);
-        });
-
-      } catch (error: any) {
-        console.error(`[${new Date().toISOString()}] Error updating ${symbol}:`, error.message);
-      }
-    }
-
-    // Update market movers every 30 seconds (every 6th update)
-    updateCounter++;
-    if (updateCounter >= 6) {
-      updateCounter = 0;
-
-      // Get and broadcast top 20 gainers and losers
-      try {
-        console.log(`[${new Date().toISOString()}] Fetching market movers...`);
-
-        const [gainersData, losersData] = await Promise.all([
-          yahooFinanceInstance.screener({ scrIds: 'day_gainers', count: 20 }),
-          yahooFinanceInstance.screener({ scrIds: 'day_losers', count: 20 })
-        ]);
-
-        const gainers = gainersData?.quotes?.slice(0, 20).map((quote: any) => ({
-          symbol: quote.symbol,
-          name: quote.shortName || quote.longName || '',
-          price: quote.regularMarketPrice || 0,
-          change: quote.regularMarketChangePercent
-            ? `${quote.regularMarketChangePercent >= 0 ? '+' : ''}${(quote.regularMarketChangePercent * 100).toFixed(2)}%`
-            : '0.00%',
-          changePercent: quote.regularMarketChangePercent || 0
-        })) || [];
-
-        const losers = losersData?.quotes?.slice(0, 20).map((quote: any) => ({
-          symbol: quote.symbol,
-          name: quote.shortName || quote.longName || '',
-          price: quote.regularMarketPrice || 0,
-          change: quote.regularMarketChangePercent
-            ? `${quote.regularMarketChangePercent >= 0 ? '+' : ''}${(quote.regularMarketChangePercent * 100).toFixed(2)}%`
-            : '0.00%',
-          changePercent: quote.regularMarketChangePercent || 0
-        })) || [];
-
-        const marketMoversUpdate = {
-          type: 'market_movers_update',
-          gainers: gainers,
-          losers: losers,
-          timestamp: Date.now()
-        };
-
-        // Send market movers to all connected clients
-        let moversSentCount = 0;
-        clients.forEach(client => {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify(marketMoversUpdate));
-            moversSentCount++;
-          }
-        });
-
-        console.log(`[${new Date().toISOString()}] Market movers updated: ${gainers.length} gainers, ${losers.length} losers - sent to ${moversSentCount} client(s)`);
-
-        // Store market movers in ClickHouse (non-blocking)
-        Promise.all([
-          storeMarketMovers('gainers', gainers),
-          storeMarketMovers('losers', losers)
-        ]).catch((storageError: any) => {
-          // Silently fail if ClickHouse is not available
-          console.debug(`[${new Date().toISOString()}] ClickHouse storage failed for market movers (non-critical):`, storageError.message);
-        });
-
-      } catch (error: any) {
-        console.error(`[${new Date().toISOString()}] Error fetching market movers:`, error.message);
-      }
-    }
-
-    console.log(`[${new Date().toISOString()}] Update cycle completed: ${updateCount}/${popularSymbols.length} symbols updated`);
-
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] Error in update broadcast:`, error);
-  }
-}, 5000); // Update every 5 seconds
+}, 60000); // Every minute
 
 declare module "http" {
   interface IncomingMessage {
@@ -209,7 +72,7 @@ app.use(express.urlencoded({ extended: false }));
   // Error handling middleware
   app.use(errorHandler);
 
-  // Initialize price broadcaster
+  // Initialize price broadcaster (handles all real-time data streaming)
   priceBroadcaster = new PriceBroadcaster(clients);
   priceBroadcaster.start();
 
@@ -248,8 +111,8 @@ app.use(express.urlencoded({ extended: false }));
     },
     () => {
       log(`[${new Date().toISOString()}] Market Watcher server started on port ${port}`);
-      log(`[${new Date().toISOString()}] WebSocket server ready for connections`);
-      log(`[${new Date().toISOString()}] Real-time price updates enabled (5-second intervals)`);
+      log(`[${new Date().toISOString()}] WebSocket server ready for real-time updates`);
+      log(`[${new Date().toISOString()}] Broadcasting: prices(5s), movers(30s), AI signals(15s), trending(60s)`);
       log(`[${new Date().toISOString()}] Yahoo Finance API integration active`);
       log(`[${new Date().toISOString()}] Background data fetcher active - data cached in ClickHouse`);
     },
