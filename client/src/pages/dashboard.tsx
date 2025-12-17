@@ -607,40 +607,42 @@ export default function Dashboard() {
               </Button>
             </div>
             
-            <TabsContent value="gainers" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden">
-              <div className="h-full overflow-y-auto pr-2 custom-scrollbar space-y-2">
-                {loading ? (
-                  <div className="text-center text-muted-foreground py-4">Loading market data...</div>
-                ) : (
-                  topGainers.map((stock) => (
-                    <StockCard 
-                      key={stock.symbol} 
-                      stock={stock} 
-                      isSelected={selectedStock?.symbol === stock.symbol}
-                      onClick={() => setSelectedStock(stock)}
-                      type="gainer"
-                    />
-                  ))
-                )}
-              </div>
-            </TabsContent>
-            <TabsContent value="losers" className="mt-0 flex-1 min-h-0 data-[state=inactive]:hidden">
-              <div className="h-full overflow-y-auto pr-2 custom-scrollbar space-y-2">
-                {loading ? (
-                  <div className="text-center text-muted-foreground py-4">Loading market data...</div>
-                ) : (
-                  topLosers.map((stock) => (
-                    <StockCard 
-                      key={stock.symbol} 
-                      stock={stock} 
-                      isSelected={selectedStock?.symbol === stock.symbol}
-                      onClick={() => setSelectedStock(stock)}
-                      type="loser"
-                    />
-                  ))
-                )}
-              </div>
-            </TabsContent>
+            <div className="flex-1 min-h-0 relative">
+              <TabsContent value="gainers" className="absolute inset-0 mt-0 data-[state=inactive]:hidden">
+                <div className="h-full overflow-y-auto pr-2 custom-scrollbar space-y-2">
+                  {loading ? (
+                    <div className="text-center text-muted-foreground py-4">Loading market data...</div>
+                  ) : (
+                    topGainers.map((stock) => (
+                      <StockCard 
+                        key={stock.symbol} 
+                        stock={stock} 
+                        isSelected={selectedStock?.symbol === stock.symbol}
+                        onClick={() => setSelectedStock(stock)}
+                        type="gainer"
+                      />
+                    ))
+                  )}
+                </div>
+              </TabsContent>
+              <TabsContent value="losers" className="absolute inset-0 mt-0 data-[state=inactive]:hidden">
+                <div className="h-full overflow-y-auto pr-2 custom-scrollbar space-y-2">
+                  {loading ? (
+                    <div className="text-center text-muted-foreground py-4">Loading market data...</div>
+                  ) : (
+                    topLosers.map((stock) => (
+                      <StockCard 
+                        key={stock.symbol} 
+                        stock={stock} 
+                        isSelected={selectedStock?.symbol === stock.symbol}
+                        onClick={() => setSelectedStock(stock)}
+                        type="loser"
+                      />
+                    ))
+                  )}
+                </div>
+              </TabsContent>
+            </div>
           </Tabs>
         </aside>
 

@@ -137,4 +137,9 @@
     background: theme('colors.primary.DEFAULT');
     opacity: 0.8;
   }
+
+  /* Hide inactive tabs - Radix UI uses data-state attribute */
+  [data-state="inactive"] {
+    display: none !important;
+  }
 }
