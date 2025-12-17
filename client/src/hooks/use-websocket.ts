@@ -215,6 +215,58 @@ export const useWebSocket = (
     return `${protocol}//${host}`;
   }, [urlOrOptions]);
 
+  // Handle incoming messages (defined before connect to avoid initialization error)
+  const handleMessage = useCallback((data: WebSocketMessage) => {
+    switch (data.type) {
+      case 'price_update':
+        setPriceUpdates(prev => {
+          const newMap = new Map(prev);
+          newMap.set(data.symbol, data);
+          return newMap;
+        });
+        break;
+
+      case 'market_movers_update':
+        setMarketMovers({
+          gainers: data.gainers,
+          losers: data.losers
+        });
+        break;
+
+      case 'trending_update':
+        setTrendingSymbols(data.symbols);
+        break;
+
+      case 'ai_signal':
+        setAiSignals(prev => {
+          const newMap = new Map(prev);
+          newMap.set(data.signal.symbol, data.signal);
+          return newMap;
+        });
+        setLatestAISignal(data.signal);
+        break;
+
+      case 'historical_update':
+        setHistoricalData(prev => {
+          const newMap = new Map(prev);
+          newMap.set(data.symbol, data.data);
+          return newMap;
+        });
+        break;
+
+      case 'connection_status':
+        setConnectionStatus(data);
+        subscribedSymbols.current = data.subscribedSymbols;
+        subscribedEvents.current = data.subscribedEvents;
+        break;
+
+      case 'error':
+        setErrors(prev => [...prev.slice(-9), data]);
+        setError(data.message);
+        break;
+    }
+  }, []);
+
   // Connect to WebSocket
   const connect = useCallback(() => {
     // Prevent multiple simultaneous connection attempts
@@ -313,58 +365,6 @@ export const useWebSocket = (
       setError('Failed to create WebSocket connection');
     }
   }, [getWsUrl, symbols, events, maxReconnectAttempts, baseReconnectDelay, handleMessage]);
-
-  // Handle incoming messages
-  const handleMessage = useCallback((data: WebSocketMessage) => {
-    switch (data.type) {
-      case 'price_update':
-        setPriceUpdates(prev => {
-          const newMap = new Map(prev);
-          newMap.set(data.symbol, data);
-          return newMap;
-        });
-        break;
-
-      case 'market_movers_update':
-        setMarketMovers({
-          gainers: data.gainers,
-          losers: data.losers
-        });
-        break;
-
-      case 'trending_update':
-        setTrendingSymbols(data.symbols);
-        break;
-
-      case 'ai_signal':
-        setAiSignals(prev => {
-          const newMap = new Map(prev);
-          newMap.set(data.signal.symbol, data.signal);
-          return newMap;
-        });
-        setLatestAISignal(data.signal);
-        break;
-
-      case 'historical_update':
-        setHistoricalData(prev => {
-          const newMap = new Map(prev);
-          newMap.set(data.symbol, data.data);
-          return newMap;
-        });
-        break;
-
-      case 'connection_status':
-        setConnectionStatus(data);
-        subscribedSymbols.current = data.subscribedSymbols;
-        subscribedEvents.current = data.subscribedEvents;
-        break;
-
-      case 'error':
-        setErrors(prev => [...prev.slice(-9), data]);
-        setError(data.message);
-        break;
-    }
-  }, []);
 
   // Subscribe to symbols and events
   const subscribe = useCallback((newSymbols: string[], newEvents?: WebSocketEventType[]) => {
