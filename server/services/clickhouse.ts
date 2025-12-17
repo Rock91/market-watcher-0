@@ -107,6 +107,41 @@ export async function initializeClickHouse() {
       `,
     });
 
+    // Create historical_data table for daily OHLCV data
+    await clickhouseClient.exec({
+      query: `
+        CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}.historical_data (
+          date Date,
+          symbol String,
+          open Float64,
+          high Float64,
+          low Float64,
+          close Float64,
+          volume UInt64,
+          adj_close Float64,
+          fetched_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(fetched_at)
+        PARTITION BY toYYYYMM(date)
+        ORDER BY (symbol, date)
+        TTL date + INTERVAL 2 YEAR
+      `,
+    });
+
+    // Create trending_symbols table
+    await clickhouseClient.exec({
+      query: `
+        CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}.trending_symbols (
+          timestamp DateTime,
+          symbol String,
+          name String,
+          rank UInt32
+        ) ENGINE = MergeTree()
+        PARTITION BY toYYYYMMDD(timestamp)
+        ORDER BY (timestamp, rank)
+        TTL timestamp + INTERVAL 7 DAY
+      `,
+    });
+
     console.log(`[${new Date().toISOString()}] ClickHouse database initialized successfully`);
   } catch (error: any) {
 
@@ -233,5 +268,146 @@ export async function getLatestMarketMovers(type: 'gainers' | 'losers', limit: n
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error querying market movers (${type}):`, error);
     return [];
+  }
+}
+
+// Store historical OHLCV data
+export async function storeHistoricalData(symbol: string, data: any[]) {
+  try {
+    if (!data || data.length === 0) return;
+
+    const values = data.map((item: any) => ({
+      date: new Date(item.date),
+      symbol,
+      open: item.open || 0,
+      high: item.high || 0,
+      low: item.low || 0,
+      close: item.close || 0,
+      volume: item.volume || 0,
+      adj_close: item.adjClose || item.close || 0,
+    }));
+
+    await clickhouseClient.insert({
+      table: `${CLICKHOUSE_CONFIG.database}.historical_data`,
+      values,
+      format: 'JSONEachRow',
+    });
+
+    console.log(`[${new Date().toISOString()}] Stored ${data.length} historical records for ${symbol}`);
+  } catch (error) {
+    // Silently fail if ClickHouse is not available
+    return;
+  }
+}
+
+// Get historical data for a symbol
+export async function getHistoricalData(symbol: string, days: number = 30) {
+  try {
+    const result = await clickhouseClient.query({
+      query: `
+        SELECT date, open, high, low, close, volume, adj_close
+        FROM ${CLICKHOUSE_CONFIG.database}.historical_data
+        WHERE symbol = {symbol:String}
+        AND date >= today() - INTERVAL {days:UInt32} DAY
+        ORDER BY date ASC
+      `,
+      query_params: { symbol, days },
+      format: 'JSONEachRow',
+    });
+
+    return result.json();
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error querying historical data for ${symbol}:`, error);
+    return [];
+  }
+}
+
+// Store trending symbols
+export async function storeTrendingSymbols(symbols: any[]) {
+  try {
+    if (!symbols || symbols.length === 0) return;
+
+    const values = symbols.map((item: any, index: number) => ({
+      timestamp: new Date(),
+      symbol: item.symbol,
+      name: item.shortName || item.longName || item.symbol,
+      rank: index + 1,
+    }));
+
+    await clickhouseClient.insert({
+      table: `${CLICKHOUSE_CONFIG.database}.trending_symbols`,
+      values,
+      format: 'JSONEachRow',
+    });
+
+    console.log(`[${new Date().toISOString()}] Stored ${symbols.length} trending symbols`);
+  } catch (error) {
+    // Silently fail if ClickHouse is not available
+    return;
+  }
+}
+
+// Get latest trending symbols
+export async function getLatestTrendingSymbols(limit: number = 20) {
+  try {
+    const result = await clickhouseClient.query({
+      query: `
+        SELECT symbol, name, rank
+        FROM ${CLICKHOUSE_CONFIG.database}.trending_symbols
+        WHERE timestamp >= now() - INTERVAL 1 HOUR
+        ORDER BY timestamp DESC, rank ASC
+        LIMIT {limit:UInt32}
+      `,
+      query_params: { limit },
+      format: 'JSONEachRow',
+    });
+
+    return result.json();
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error querying trending symbols:`, error);
+    return [];
+  }
+}
+
+// Get latest stock quote from database
+export async function getLatestStockQuote(symbol: string) {
+  try {
+    const result = await clickhouseClient.query({
+      query: `
+        SELECT *
+        FROM ${CLICKHOUSE_CONFIG.database}.stock_quotes
+        WHERE symbol = {symbol:String}
+        ORDER BY timestamp DESC
+        LIMIT 1
+      `,
+      query_params: { symbol },
+      format: 'JSONEachRow',
+    });
+
+    const data: any = await result.json();
+    return data.length > 0 ? data[0] : null;
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error querying stock quote for ${symbol}:`, error);
+    return null;
+  }
+}
+
+// Check if data is fresh (within the given minutes)
+export async function isDataFresh(table: string, minutes: number = 5): Promise<boolean> {
+  try {
+    const result = await clickhouseClient.query({
+      query: `
+        SELECT count() as count
+        FROM ${CLICKHOUSE_CONFIG.database}.${table}
+        WHERE timestamp >= now() - INTERVAL {minutes:UInt32} MINUTE
+      `,
+      query_params: { minutes },
+      format: 'JSONEachRow',
+    });
+
+    const data: any = await result.json();
+    return data.length > 0 && data[0].count > 0;
+  } catch (error) {
+    return false;
   }
 }

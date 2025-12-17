@@ -14,6 +14,7 @@ import { serveStatic } from "./static";
 import { initializeClickHouse, storeStockQuote, storeMarketMovers } from './services/clickhouse';
 import { yahooFinanceInstance } from './services/yahooFinance';
 import { log } from './utils/helpers';
+import { startDataFetcher } from './jobs/dataFetcher';
 
 // Extended WebSocket interface with symbols property
 interface ExtendedWebSocket extends WebSocket {
@@ -223,15 +224,23 @@ app.use(express.urlencoded({ extended: false }));
   }
 
   // Initialize ClickHouse database (non-blocking)
-  initializeClickHouse().catch((error) => {
-    console.warn(`[${new Date().toISOString()}] ClickHouse initialization failed (server will continue without database):`, error.message);
-  });
+  initializeClickHouse()
+    .then(() => {
+      // Start background data fetcher after ClickHouse is ready
+      startDataFetcher();
+      log(`[${new Date().toISOString()}] Background data fetcher started`);
+    })
+    .catch((error) => {
+      console.warn(`[${new Date().toISOString()}] ClickHouse initialization failed (server will continue without database):`, error.message);
+      // Still start the data fetcher - it will gracefully handle DB unavailability
+      startDataFetcher();
+    });
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 3001 if not specified.
+  // Other ports are firewalled. Default to 3000 if not specified.
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || "3001", 10);
+  const port = parseInt(process.env.PORT || "3000", 10);
   httpServer.listen(
     {
       port,
@@ -242,7 +251,7 @@ app.use(express.urlencoded({ extended: false }));
       log(`[${new Date().toISOString()}] WebSocket server ready for connections`);
       log(`[${new Date().toISOString()}] Real-time price updates enabled (5-second intervals)`);
       log(`[${new Date().toISOString()}] Yahoo Finance API integration active`);
-      log(`[${new Date().toISOString()}] ClickHouse database initialized`);
+      log(`[${new Date().toISOString()}] Background data fetcher active - data cached in ClickHouse`);
     },
   );
 })();
