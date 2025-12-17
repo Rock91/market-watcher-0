@@ -199,6 +199,8 @@ export const useWebSocket = (
   const reconnectAttempts = useRef(0);
   const subscribedSymbols = useRef<string[]>([]);
   const subscribedEvents = useRef<WebSocketEventType[]>([]);
+  const isConnecting = useRef(false);
+  const isMounted = useRef(true);
 
   // Build WebSocket URL
   const getWsUrl = useCallback(() => {
@@ -215,6 +217,26 @@ export const useWebSocket = (
 
   // Connect to WebSocket
   const connect = useCallback(() => {
+    // Prevent multiple simultaneous connection attempts
+    if (isConnecting.current || (ws.current && ws.current.readyState === WebSocket.OPEN)) {
+      console.log('[WebSocket] Already connected or connecting, skipping');
+      return;
+    }
+
+    // Clean up any existing connection
+    if (ws.current) {
+      ws.current.onclose = null;
+      ws.current.onerror = null;
+      ws.current.onmessage = null;
+      ws.current.onopen = null;
+      if (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING) {
+        ws.current.close(1000);
+      }
+      ws.current = null;
+    }
+
+    isConnecting.current = true;
+
     try {
       const wsUrl = getWsUrl();
       console.log('[WebSocket] Connecting to:', wsUrl);
@@ -222,7 +244,9 @@ export const useWebSocket = (
       ws.current = new WebSocket(wsUrl);
 
       ws.current.onopen = () => {
+        if (!isMounted.current) return;
         console.log('[WebSocket] Connected');
+        isConnecting.current = false;
         setIsConnected(true);
         setError(null);
         reconnectAttempts.current = 0;
@@ -230,12 +254,21 @@ export const useWebSocket = (
         // Subscribe to symbols and events
         if (symbols.length > 0 || events.length > 0) {
           setTimeout(() => {
-            subscribe(symbols, events);
+            if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+              const message = {
+                type: 'subscribe',
+                symbols: symbols,
+                events: events
+              };
+              ws.current.send(JSON.stringify(message));
+              console.log('[WebSocket] Subscribed:', message);
+            }
           }, 100);
         }
       };
 
       ws.current.onmessage = (event) => {
+        if (!isMounted.current) return;
         try {
           const data = JSON.parse(event.data) as WebSocketMessage;
           handleMessage(data);
@@ -245,12 +278,14 @@ export const useWebSocket = (
       };
 
       ws.current.onclose = (event) => {
+        if (!isMounted.current) return;
         console.log('[WebSocket] Disconnected:', event.code, event.reason);
+        isConnecting.current = false;
         setIsConnected(false);
         setConnectionStatus(prev => prev ? { ...prev, status: 'disconnected' } : null);
 
-        // Attempt reconnect if not intentional
-        if (event.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
+        // Attempt reconnect if not intentional and component is still mounted
+        if (event.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts && isMounted.current) {
           reconnectAttempts.current++;
           const delay = baseReconnectDelay * Math.pow(2, reconnectAttempts.current - 1);
           console.log(`[WebSocket] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})`);
@@ -258,21 +293,26 @@ export const useWebSocket = (
           setConnectionStatus(prev => prev ? { ...prev, status: 'reconnecting' } : null);
           
           reconnectTimeout.current = setTimeout(() => {
-            connect();
+            if (isMounted.current) {
+              connect();
+            }
           }, delay);
         }
       };
 
       ws.current.onerror = (error) => {
+        if (!isMounted.current) return;
         console.error('[WebSocket] Error:', error);
+        isConnecting.current = false;
         setError('WebSocket connection error');
       };
 
     } catch (err) {
       console.error('[WebSocket] Failed to connect:', err);
+      isConnecting.current = false;
       setError('Failed to create WebSocket connection');
     }
-  }, [getWsUrl, symbols, events, maxReconnectAttempts, baseReconnectDelay]);
+  }, [getWsUrl, symbols, events, maxReconnectAttempts, baseReconnectDelay, handleMessage]);
 
   // Handle incoming messages
   const handleMessage = useCallback((data: WebSocketMessage) => {
@@ -385,9 +425,11 @@ export const useWebSocket = (
       reconnectTimeout.current = null;
     }
     if (ws.current) {
+      ws.current.onclose = null; // Prevent reconnect attempts
       ws.current.close(1000, 'Client disconnecting');
       ws.current = null;
     }
+    isConnecting.current = false;
     setIsConnected(false);
     subscribedSymbols.current = [];
     subscribedEvents.current = [];
@@ -400,16 +442,44 @@ export const useWebSocket = (
     setTimeout(connect, 100);
   }, [disconnect, connect]);
 
-  // Auto-connect on mount
+  // Auto-connect on mount (run only once)
   useEffect(() => {
+    isMounted.current = true;
+    
     if (autoConnect) {
-      connect();
+      // Small delay to avoid React Strict Mode double-mount issues
+      const connectTimer = setTimeout(() => {
+        if (isMounted.current) {
+          connect();
+        }
+      }, 100);
+
+      return () => {
+        clearTimeout(connectTimer);
+        isMounted.current = false;
+        
+        // Clean up reconnect timeout
+        if (reconnectTimeout.current) {
+          clearTimeout(reconnectTimeout.current);
+          reconnectTimeout.current = null;
+        }
+        
+        // Close WebSocket
+        if (ws.current) {
+          ws.current.onclose = null; // Prevent reconnect on cleanup
+          ws.current.close(1000, 'Component unmounting');
+          ws.current = null;
+        }
+        
+        isConnecting.current = false;
+      };
     }
 
     return () => {
-      disconnect();
+      isMounted.current = false;
     };
-  }, [autoConnect, connect, disconnect]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run only on mount/unmount
 
   // Update subscriptions when symbols change
   useEffect(() => {
