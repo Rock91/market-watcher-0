@@ -54,7 +54,7 @@ export async function initializeClickHouse() {
       query: `
         CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}.stock_quotes (
           timestamp DateTime,
-          symbol String,
+          symbol LowCardinality(String),
           price Float64,
           change Float64,
           change_percent Float64,
@@ -64,7 +64,8 @@ export async function initializeClickHouse() {
           day_high Float64,
           day_low Float64,
           previous_close Float64,
-          currency String
+          currency LowCardinality(String),
+          INDEX symbol_bf symbol TYPE bloom_filter GRANULARITY 1
         ) ENGINE = MergeTree()
         PARTITION BY toYYYYMM(timestamp)
         ORDER BY (symbol, timestamp)
@@ -77,12 +78,13 @@ export async function initializeClickHouse() {
       query: `
         CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}.market_movers (
           timestamp DateTime,
-          type String, -- 'gainers' or 'losers'
-          symbol String,
+          type LowCardinality(String), -- 'gainers' or 'losers'
+          symbol LowCardinality(String),
           name String,
           price Float64,
           change_percent Float64,
-          rank UInt32 -- position in the list (1-20)
+          rank UInt32, -- position in the list (1-20)
+          INDEX symbol_bf symbol TYPE bloom_filter GRANULARITY 1
         ) ENGINE = MergeTree()
         PARTITION BY toYYYYMMDD(timestamp)
         ORDER BY (type, timestamp, rank)
@@ -112,14 +114,15 @@ export async function initializeClickHouse() {
       query: `
         CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}.historical_data (
           date Date,
-          symbol String,
+          symbol LowCardinality(String),
           open Float64,
           high Float64,
           low Float64,
           close Float64,
           volume UInt64,
           adj_close Float64,
-          fetched_at DateTime DEFAULT now()
+          fetched_at DateTime DEFAULT now(),
+          INDEX symbol_bf symbol TYPE bloom_filter GRANULARITY 1
         ) ENGINE = ReplacingMergeTree(fetched_at)
         PARTITION BY toYYYYMM(date)
         ORDER BY (symbol, date)
@@ -132,15 +135,40 @@ export async function initializeClickHouse() {
       query: `
         CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}.trending_symbols (
           timestamp DateTime,
-          symbol String,
+          symbol LowCardinality(String),
           name String,
-          rank UInt32
+          rank UInt32,
+          INDEX symbol_bf symbol TYPE bloom_filter GRANULARITY 1
         ) ENGINE = MergeTree()
         PARTITION BY toYYYYMMDD(timestamp)
         ORDER BY (timestamp, rank)
         TTL timestamp + INTERVAL 7 DAY
       `,
     });
+
+    // Best-effort: apply optimizations to existing tables (safe to ignore failures)
+    const tryExec = async (query: string) => {
+      try {
+        await clickhouseClient.exec({ query });
+      } catch (e: any) {
+        // Don't fail server startup over optional optimizations
+        console.warn(`[${new Date().toISOString()}] ClickHouse optimization skipped: ${e?.message || e}`);
+      }
+    };
+
+    // LowCardinality columns reduce memory/IO for repetitive strings (symbol/type/currency)
+    await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.stock_quotes MODIFY COLUMN symbol LowCardinality(String)`);
+    await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.stock_quotes MODIFY COLUMN currency LowCardinality(String)`);
+    await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.market_movers MODIFY COLUMN type LowCardinality(String)`);
+    await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.market_movers MODIFY COLUMN symbol LowCardinality(String)`);
+    await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.historical_data MODIFY COLUMN symbol LowCardinality(String)`);
+    await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.trending_symbols MODIFY COLUMN symbol LowCardinality(String)`);
+
+    // Bloom filter indexes can speed up symbol IN (...) and high-selectivity filters
+    await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.stock_quotes ADD INDEX IF NOT EXISTS symbol_bf symbol TYPE bloom_filter GRANULARITY 1`);
+    await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.market_movers ADD INDEX IF NOT EXISTS symbol_bf symbol TYPE bloom_filter GRANULARITY 1`);
+    await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.historical_data ADD INDEX IF NOT EXISTS symbol_bf symbol TYPE bloom_filter GRANULARITY 1`);
+    await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.trending_symbols ADD INDEX IF NOT EXISTS symbol_bf symbol TYPE bloom_filter GRANULARITY 1`);
 
     console.log(`[${new Date().toISOString()}] ClickHouse database initialized successfully`);
   } catch (error: any) {
