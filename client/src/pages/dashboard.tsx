@@ -190,6 +190,10 @@ export default function Dashboard() {
           trending: trending.symbols?.length || 0,
           popularQuotes: popularQuotes.filter(q => q !== null).length
         });
+        
+        // Debug: Log first few items from each array
+        console.log('[Dashboard] Sample gainers:', gainers.slice(0, 3));
+        console.log('[Dashboard] Sample losers:', losers.slice(0, 3));
 
         setTopGainers(gainers);
         setTopLosers(losers);
@@ -675,6 +679,8 @@ export default function Dashboard() {
                 <div className="h-full overflow-y-auto pr-2 custom-scrollbar space-y-2">
                   {loading ? (
                     <div className="text-center text-muted-foreground py-4">Loading market data...</div>
+                  ) : topGainers.length === 0 ? (
+                    <div className="text-center text-muted-foreground py-4">No gainers data available</div>
                   ) : (
                     topGainers.map((stock) => (
                       <StockCard 
@@ -692,6 +698,8 @@ export default function Dashboard() {
                 <div className="h-full overflow-y-auto pr-2 custom-scrollbar space-y-2">
                   {loading ? (
                     <div className="text-center text-muted-foreground py-4">Loading market data...</div>
+                  ) : topLosers.length === 0 ? (
+                    <div className="text-center text-muted-foreground py-4">No losers data available</div>
                   ) : (
                     topLosers.map((stock) => (
                       <StockCard 
