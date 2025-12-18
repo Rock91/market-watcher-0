@@ -19,6 +19,8 @@ import {
   storeTrackedSymbolsFromMovers,
   storeHistoricalData,
   storeTrendingSymbols,
+  getHistoricalDataRange,
+  getSymbolsNeedingBackfill,
   isDataFresh,
 } from '../services/clickhouse';
 
@@ -108,11 +110,22 @@ async function fetchAndStoreHistoricalData() {
   let successCount = 0;
   let errorCount = 0;
 
-  for (const symbol of POPULAR_SYMBOLS.slice(0, 10)) { // Limit to first 10 to avoid rate limiting
+  // Prefer symbols derived from market movers (tracked_symbols table)
+  const symbolsNeedingBackfill = await getSymbolsNeedingBackfill(365);
+  const symbolsToProcess = (symbolsNeedingBackfill.length > 0
+    ? symbolsNeedingBackfill
+    : POPULAR_SYMBOLS).slice(0, 10); // Limit to first 10 to avoid rate limiting
+
+  for (const symbol of symbolsToProcess) {
     try {
+      const range = await getHistoricalDataRange(symbol);
+
       const endDate = new Date();
       const startDate = new Date();
-      startDate.setDate(endDate.getDate() - 30); // 30 days of history
+
+      // If no data exists, backfill 1 year; otherwise keep it light (30 days refresh)
+      const backfillDays = range.count > 0 ? 30 : 365;
+      startDate.setDate(endDate.getDate() - backfillDays);
 
       const historicalData = await fetchYahooHistoricalData(symbol, startDate, endDate, '1d');
       

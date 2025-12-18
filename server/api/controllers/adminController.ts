@@ -30,7 +30,7 @@ export async function getClickhouseHealthController(_req: Request, res: Response
         total_bytes
       FROM system.tables
       WHERE database = {db:String}
-        AND name IN ('stock_quotes','market_movers','historical_data','trending_symbols','stock_metadata')
+        AND name IN ('stock_quotes','market_movers','historical_data','trending_symbols','tracked_symbols','stock_metadata')
       ORDER BY name
       `,
       { db: CLICKHOUSE_CONFIG.database },
@@ -43,6 +43,7 @@ export async function getClickhouseHealthController(_req: Request, res: Response
         (SELECT max(timestamp) FROM ${CLICKHOUSE_CONFIG.database}.stock_quotes) AS stock_quotes_max_ts,
         (SELECT max(timestamp) FROM ${CLICKHOUSE_CONFIG.database}.market_movers) AS market_movers_max_ts,
         (SELECT max(timestamp) FROM ${CLICKHOUSE_CONFIG.database}.trending_symbols) AS trending_max_ts,
+        (SELECT max(last_seen) FROM ${CLICKHOUSE_CONFIG.database}.tracked_symbols) AS tracked_symbols_max_ts,
         (SELECT max(date) FROM ${CLICKHOUSE_CONFIG.database}.historical_data) AS historical_max_date
       `,
     );
