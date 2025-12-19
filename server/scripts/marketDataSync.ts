@@ -96,7 +96,7 @@ async function fetchAllMarketMovers(): Promise<string[]> {
   }
   
   // Remove duplicates
-  return [...new Set(allSymbols)];
+  return Array.from(new Set(allSymbols));
 }
 
 /**

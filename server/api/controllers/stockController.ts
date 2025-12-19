@@ -154,12 +154,13 @@ export async function getStockHistoryController(req: Request, res: Response) {
 
     console.log(`[${new Date().toISOString()}] Fetching ClickHouse history for ${symbol}, last ${hours} hours, limit ${limit}`);
 
-    const history = await getStockHistory(symbol, parseInt(hours as string), parseInt(limit as string));
+    const history = await getStockHistory(symbol, parseInt(hours as string));
 
-    console.log(`[${new Date().toISOString()}] Retrieved ${history.length} historical records for ${symbol}`);
-    res.json(history);
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] Error fetching ClickHouse history for ${symbol}:`, error);
+      console.log(`[${new Date().toISOString()}] Retrieved ${history.length} historical records for ${symbol}`);
+      res.json(history);
+    } catch (error) {
+      const symbolParam = req.params.symbol;
+      console.error(`[${new Date().toISOString()}] Error fetching ClickHouse history for ${symbolParam}:`, error);
     res.status(500).json({ error: 'Failed to fetch historical data from ClickHouse' });
   }
 }

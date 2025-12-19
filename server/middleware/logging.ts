@@ -10,9 +10,9 @@ export function requestLogger(req: Request, res: Response, next: NextFunction) {
 
   // Override res.json to capture the response
   const originalResJson = res.json;
-  res.json = function (bodyJson: any, ...args: any[]) {
+  res.json = function (bodyJson: any) {
     capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
+    return originalResJson.call(res, bodyJson);
   };
 
   res.on("finish", () => {

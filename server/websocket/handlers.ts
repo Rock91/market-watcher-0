@@ -13,7 +13,7 @@ import {
 import { generateAISignal, type MarketData } from '../services/ai-strategies';
 import { getHistoricalData } from '../services/yahooFinance';
 import { getStockHistory, getHistoricalData as getDbHistoricalData } from '../services/clickhouse';
-import { v4 as uuidv4 } from 'crypto';
+import { v4 as uuidv4 } from 'uuid';
 
 // Generate unique client ID
 function generateClientId(): string {
@@ -197,7 +197,12 @@ async function handleAISignalRequest(ws: ExtendedWebSocket, data: RequestAISigna
         confidence: signal.confidence,
         reason: signal.reason,
         strategy,
-        indicators: signal.indicators || {},
+        indicators: {
+          rsi: signal.technicalIndicators?.rsi,
+          macd: signal.technicalIndicators?.macd ? { value: signal.technicalIndicators.macd, signal: 0, histogram: 0 } : undefined,
+          sma20: signal.technicalIndicators?.movingAverages?.sma20,
+          sma50: signal.technicalIndicators?.movingAverages?.sma50,
+        },
         priceTarget
       },
       timestamp: Date.now()

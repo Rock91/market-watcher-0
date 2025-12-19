@@ -2,8 +2,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import yahooFinance from 'yahoo-finance2';
 import { storage } from "./storage";
-import { generateAISignal, type MarketData } from "./ai-strategies";
-import { getStockHistory, getLatestMarketMovers } from "./clickhouse";
+import { generateAISignal, type MarketData } from "../services/ai-strategies";
+import { getStockHistory, getLatestMarketMovers } from "../services/clickhouse";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -128,7 +128,7 @@ export async function registerRoutes(
         currency: quote.currency || 'USD'
       })) || [];
 
-      console.log(`[${new Date().toISOString()}] Returning ${result.length} ${type} results:`, result.map(r => `${r.symbol}: ${r.change}`));
+      console.log(`[${new Date().toISOString()}] Returning ${result.length} ${type} results:`, result.map((r: any) => `${r.symbol}: ${r.change}`));
 
       res.json(result);
     } catch (error) {
@@ -157,14 +157,16 @@ export async function registerRoutes(
       const { symbol } = req.params;
       const { hours = 24, limit = 1000 } = req.query;
 
-      console.log(`[${new Date().toISOString()}] Fetching ClickHouse history for ${symbol}, last ${hours} hours, limit ${limit}`);
+      const symbolParam = req.params.symbol;
+      console.log(`[${new Date().toISOString()}] Fetching ClickHouse history for ${symbolParam}, last ${hours} hours, limit ${limit}`);
 
-      const history = await getStockHistory(symbol, parseInt(hours as string), parseInt(limit as string));
+      const history = await getStockHistory(symbolParam, parseInt(hours as string));
 
-      console.log(`[${new Date().toISOString()}] Retrieved ${history.length} historical records for ${symbol}`);
+      console.log(`[${new Date().toISOString()}] Retrieved ${history.length} historical records for ${symbolParam}`);
       res.json(history);
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] Error fetching ClickHouse history for ${symbol}:`, error);
+      const symbolParam = req.params.symbol;
+      console.error(`[${new Date().toISOString()}] Error fetching ClickHouse history for ${symbolParam}:`, error);
       res.status(500).json({ error: 'Failed to fetch historical data from ClickHouse' });
     }
   });
