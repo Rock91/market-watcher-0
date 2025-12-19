@@ -57,11 +57,12 @@ const liveClient = createClient({
   request_timeout: 30000, // 30 seconds for large queries
 });
 
+// Create local client with 'default' database first (we'll create target DB in init)
 const localClient = createClient({
   url: `${getProtocol(LOCAL_CONFIG.port)}://${LOCAL_CONFIG.host}:${LOCAL_CONFIG.port}`,
   username: LOCAL_CONFIG.username,
   password: LOCAL_CONFIG.password,
-  database: LOCAL_CONFIG.database,
+  database: 'default', // Use default database initially
   request_timeout: 30000,
 });
 
@@ -230,6 +231,21 @@ async function initializeLocalDatabase(): Promise<void> {
 // Get row count from a table
 async function getRowCount(client: typeof liveClient, database: string, table: string): Promise<number> {
   try {
+    // Check if table exists first
+    const tableExists = await client.query({
+      query: `
+        SELECT count() as count
+        FROM system.tables
+        WHERE database = {db:String} AND name = {table:String}
+      `,
+      query_params: { db: database, table },
+      format: 'JSONEachRow',
+    });
+    const existsData: any = await tableExists.json();
+    if (!existsData[0] || existsData[0].count === 0) {
+      return 0; // Table doesn't exist
+    }
+
     const result = await client.query({
       query: `SELECT count() as count FROM ${database}.${table}`,
       format: 'JSONEachRow',
@@ -237,7 +253,7 @@ async function getRowCount(client: typeof liveClient, database: string, table: s
     const data: any = await result.json();
     return data[0]?.count || 0;
   } catch (err: any) {
-    error(`Failed to get row count for ${table}: ${err.message}`);
+    // Silently return 0 if table doesn't exist or query fails
     return 0;
   }
 }
@@ -412,13 +428,12 @@ async function migrate(): Promise<void> {
   }
 }
 
-// Run migration
-if (import.meta.url === `file://${process.argv[1]}`) {
-  migrate().catch((err) => {
-    error(`Unhandled error: ${err.message}`);
-    process.exit(1);
-  });
-}
+// Run migration if this file is executed directly
+migrate().catch((err) => {
+  error(`Unhandled error: ${err.message}`);
+  console.error(err);
+  process.exit(1);
+});
 
 export { migrate };
 
