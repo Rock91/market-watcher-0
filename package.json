@@ -11,7 +11,8 @@
     "check": "tsc",
     "db:push": "drizzle-kit push",
     "sync:market": "tsx server/scripts/marketDataSync.ts",
-    "sync:market:once": "tsx server/scripts/marketDataSync.ts --once"
+    "sync:market:once": "tsx server/scripts/marketDataSync.ts --once",
+    "migrate:clickhouse": "tsx server/scripts/migrateClickHouse.ts"
   },
   "dependencies": {
     "@clickhouse/client": "^1.14.0",
