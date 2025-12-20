@@ -14,7 +14,6 @@
     "sync:market:once": "tsx server/scripts/marketDataSync.ts --once",
     "sync:indicators": "tsx server/scripts/technicalIndicatorsSync.ts",
     "sync:indicators:once": "tsx server/scripts/technicalIndicatorsSync.ts --once",
-    "ai:tables:create": "tsx server/scripts/createAITables.ts",
     "ai:trading": "tsx server/scripts/aiTradingSystem.ts",
     "ai:trading:once": "tsx server/scripts/aiTradingSystem.ts --once",
     "migrate:clickhouse": "tsx server/scripts/migrateClickHouse.ts",

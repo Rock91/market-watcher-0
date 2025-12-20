@@ -7,6 +7,7 @@ import {
   getLatestTrendingSymbols,
   storeTrendingSymbols
 } from '../../services/clickhouse';
+import { getMarketStatus } from '../../utils/helpers';
 
 // Get market movers (gainers or losers)
 export async function getMarketMoversController(req: Request, res: Response) {
@@ -150,5 +151,16 @@ export async function getMarketMoversHistoryController(req: Request, res: Respon
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error fetching ClickHouse market movers:`, error);
     res.status(500).json({ error: 'Failed to fetch market movers from ClickHouse' });
+  }
+}
+
+// Get market status (open/closed)
+export async function getMarketStatusController(req: Request, res: Response) {
+  try {
+    const status = getMarketStatus();
+    res.json(status);
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error getting market status:`, error);
+    res.status(500).json({ error: 'Failed to get market status' });
   }
 }

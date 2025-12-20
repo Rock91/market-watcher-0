@@ -2,7 +2,8 @@ import { Router } from 'express';
 import {
   getMarketMoversController,
   getTrendingSymbolsController,
-  getMarketMoversHistoryController
+  getMarketMoversHistoryController,
+  getMarketStatusController
 } from '../controllers/marketController';
 
 const router = Router();
@@ -15,5 +16,8 @@ router.get('/trending', getTrendingSymbolsController);
 
 // Get historical market movers from ClickHouse
 router.get('/movers/history-clickhouse', getMarketMoversHistoryController);
+
+// Get market status (open/closed)
+router.get('/status', getMarketStatusController);
 
 export default router;

@@ -31,6 +31,7 @@ import {
   clickhouseClient,
 } from '../services/clickhouse';
 import { CLICKHOUSE_CONFIG } from '../config/database';
+import { isMarketOpen, getMarketStatus } from '../utils/helpers';
 
 // Configuration
 const CONFIG = {
@@ -271,20 +272,30 @@ export async function startMarketDataSync(): Promise<void> {
   // Initialize database
   await initializeClickHouse();
   
-  // Run initial sync
-  await runSyncCycle();
+  // Run initial sync (only if market is open)
+  if (isMarketOpen()) {
+    await runSyncCycle();
+  } else {
+    const status = getMarketStatus();
+    log(`Market is closed: ${status.message}. Sync will start when market opens.`);
+  }
   
-  // Schedule periodic market movers fetch
+  // Schedule periodic market movers fetch (only when market is open)
   setInterval(async () => {
     if (!isRunning) return;
     try {
-      await fetchAllMarketMovers();
+      if (isMarketOpen()) {
+        await fetchAllMarketMovers();
+      } else {
+        const status = getMarketStatus();
+        log(`Market is closed: ${status.message}`);
+      }
     } catch (error: any) {
       console.error(`[${new Date().toISOString()}] [MarketSync] Movers fetch error:`, error.message);
     }
   }, CONFIG.MOVERS_INTERVAL_MS);
   
-  // Schedule periodic historical data check
+  // Schedule periodic historical data check (runs regardless of market status)
   setInterval(async () => {
     if (!isRunning) return;
     try {

@@ -23,6 +23,7 @@ import {
   getSymbolsNeedingBackfill,
   isDataFresh,
 } from '../services/clickhouse';
+import { isMarketOpen, getMarketStatus } from '../utils/helpers';
 
 // Popular symbols to track
 const POPULAR_SYMBOLS = [
@@ -43,6 +44,12 @@ let isRunning = false;
  * Fetch and store stock quotes for popular symbols
  */
 async function fetchAndStoreQuotes() {
+  if (!isMarketOpen()) {
+    const status = getMarketStatus();
+    console.log(`[${new Date().toISOString()}] [DataFetcher] Market is closed: ${status.message}. Skipping quote fetch.`);
+    return;
+  }
+
   console.log(`[${new Date().toISOString()}] [DataFetcher] Fetching stock quotes...`);
   
   let successCount = 0;
@@ -75,6 +82,12 @@ async function fetchAndStoreQuotes() {
  * Fetch and store market movers (gainers and losers)
  */
 async function fetchAndStoreMovers() {
+  if (!isMarketOpen()) {
+    const status = getMarketStatus();
+    console.log(`[${new Date().toISOString()}] [DataFetcher] Market is closed: ${status.message}. Skipping movers fetch.`);
+    return;
+  }
+
   console.log(`[${new Date().toISOString()}] [DataFetcher] Fetching market movers...`);
 
   try {

@@ -19,6 +19,14 @@ export const clickhouseClient = createClient({
 // Cache for created per-stock tables to avoid repeated checks
 const createdTablesCache = new Set<string>();
 
+/**
+ * Convert JavaScript Date to ClickHouse DateTime string format
+ * ClickHouse expects: 'YYYY-MM-DD HH:MM:SS'
+ */
+function dateToClickHouseDateTime(date: Date): string {
+  return date.toISOString().replace('T', ' ').replace('Z', '').substring(0, 19);
+}
+
 // Sanitize symbol name for use in table name (ClickHouse table names must be valid identifiers)
 function sanitizeTableName(symbol: string): string {
   // Replace invalid characters with underscore, ensure it starts with a letter or number
@@ -489,7 +497,7 @@ export async function storeStockQuotes(quotes: any[], timestamp: Date = new Date
       await clickhouseClient.insert({
         table: getStockQuotesTableName(symbol),
         values: symbolQuotes.map((quote: any) => ({
-          timestamp,
+          timestamp: dateToClickHouseDateTime(timestamp),
           price: quote.price || 0,
           change: quote.change || 0,
           change_percent: quote.changePercent || 0,
@@ -519,8 +527,9 @@ export async function storeStockQuote(quote: any) {
 export async function storeMarketMovers(type: 'gainers' | 'losers', movers: any[]) {
   try {
     const timestamp = new Date(); // single snapshot timestamp for all rows
+    const timestampStr = dateToClickHouseDateTime(timestamp);
     const values = movers.map((mover, index) => ({
-      timestamp,
+      timestamp: timestampStr,
       type,
       symbol: mover.symbol,
       name: mover.name,
@@ -555,13 +564,15 @@ export async function storeTrackedSymbolsFromMovers(
       return;
     }
     const lastSeen = new Date();
+    const lastSeenStr = dateToClickHouseDateTime(lastSeen);
+    
     const values = movers.map((mover, index) => ({
       symbol: mover.symbol,
       name: mover.name || mover.shortName || mover.longName || mover.symbol,
       last_source: source,
       last_type: type,
       last_rank: index + 1,
-      last_seen: lastSeen,
+      last_seen: lastSeenStr,
     }));
 
     await clickhouseClient.insert({
@@ -780,8 +791,9 @@ export async function storeTrendingSymbols(symbols: any[]) {
     if (!symbols || symbols.length === 0) return;
 
     const timestamp = new Date(); // single snapshot timestamp
+    const timestampStr = dateToClickHouseDateTime(timestamp);
     const values = symbols.map((item: any, index: number) => ({
-      timestamp,
+      timestamp: timestampStr,
       symbol: item.symbol,
       name: item.shortName || item.longName || item.symbol,
       rank: index + 1,
@@ -1080,7 +1092,7 @@ export async function logScriptStart(scriptName: string, metadata?: Record<strin
     const logEntry = {
       script_name: scriptName,
       status: 'running',
-      started_at: startedAt,
+      started_at: dateToClickHouseDateTime(startedAt),
       metadata: metadata ? JSON.stringify(metadata) : null,
     };
 
@@ -1140,8 +1152,8 @@ export async function logScriptEnd(
       values: [{
         script_name: scriptName,
         status,
-        started_at: startedAt,
-        completed_at: completedAt,
+        started_at: dateToClickHouseDateTime(startedAt),
+        completed_at: dateToClickHouseDateTime(completedAt),
         duration_ms: durationMs,
         rows_affected: rowsAffected || null,
         error_message: errorMessage || null,
@@ -1465,7 +1477,7 @@ export async function storeAIStrategyResult(result: AIStrategyResult): Promise<v
     await clickhouseClient.insert({
       table: `${CLICKHOUSE_CONFIG.database}.ai_strategy_results`,
       values: [{
-        timestamp: result.timestamp,
+        timestamp: dateToClickHouseDateTime(result.timestamp),
         symbol: result.symbol,
         strategy: result.strategy,
         action: result.action,
@@ -1496,7 +1508,7 @@ export async function storeAISignal(signal: AISignal): Promise<void> {
       table: `${CLICKHOUSE_CONFIG.database}.ai_signals`,
       values: [{
         signal_id: signal.signalId,
-        timestamp: signal.timestamp,
+        timestamp: dateToClickHouseDateTime(signal.timestamp),
         symbol: signal.symbol,
         strategy: signal.strategy,
         action: signal.action,
@@ -1504,9 +1516,9 @@ export async function storeAISignal(signal: AISignal): Promise<void> {
         reason: signal.reason,
         price: signal.price,
         status: signal.status,
-        executed_at: signal.executedAt || null,
+        executed_at: signal.executedAt ? dateToClickHouseDateTime(signal.executedAt) : null,
         trade_id: signal.tradeId || null,
-        updated_at: signal.executedAt || signal.timestamp, // Use executed_at if available, otherwise timestamp
+        updated_at: dateToClickHouseDateTime(signal.executedAt || signal.timestamp), // Use executed_at if available, otherwise timestamp
       }],
       format: 'JSONEachRow',
     });
@@ -1523,7 +1535,7 @@ export async function storeTrade(trade: Trade): Promise<void> {
       values: [{
         trade_id: trade.tradeId,
         signal_id: trade.signalId,
-        timestamp: trade.timestamp,
+        timestamp: dateToClickHouseDateTime(trade.timestamp),
         symbol: trade.symbol,
         action: trade.action,
         strategy: trade.strategy,
@@ -1532,12 +1544,12 @@ export async function storeTrade(trade: Trade): Promise<void> {
         investment_amount: trade.investmentAmount,
         confidence: trade.confidence,
         exit_price: trade.exitPrice || null,
-        exit_timestamp: trade.exitTimestamp || null,
+        exit_timestamp: trade.exitTimestamp ? dateToClickHouseDateTime(trade.exitTimestamp) : null,
         profit_loss: trade.profitLoss || null,
         profit_loss_percent: trade.profitLossPercent || null,
         status: trade.status,
         reason: trade.reason,
-        updated_at: trade.exitTimestamp || trade.timestamp, // Use exit_timestamp if available, otherwise timestamp
+        updated_at: dateToClickHouseDateTime(trade.exitTimestamp || trade.timestamp), // Use exit_timestamp if available, otherwise timestamp
       }],
       format: 'JSONEachRow',
     });

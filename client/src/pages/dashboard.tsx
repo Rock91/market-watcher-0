@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { motion, AnimatePresence } from "framer-motion";
-import { fetchStockQuote, fetchHistoricalData, fetchMarketMovers, fetchTrendingSymbols, fetchAISignal, fetchTechnicalIndicators, type StockQuote, type TechnicalIndicatorsResponse } from "@/lib/api";
+import { fetchStockQuote, fetchHistoricalData, fetchMarketMovers, fetchTrendingSymbols, fetchAISignal, fetchTechnicalIndicators, fetchMarketStatus, type StockQuote, type TechnicalIndicatorsResponse, type MarketStatus } from "@/lib/api";
 import { useWebSocket, type PriceUpdate, type MarketMover, type AISignal, type TrendingSymbol } from "@/hooks/use-websocket";
 
 // Mock Data Generators
@@ -128,6 +128,7 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [indicators, setIndicators] = useState<TechnicalIndicatorsResponse | null>(null);
   const [indicatorsLoading, setIndicatorsLoading] = useState(false);
+  const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
 
   // WebSocket connection for real-time updates with all event types
   const { 
@@ -171,11 +172,14 @@ export default function Dashboard() {
         const popularSymbols = ['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'NVDA', 'AMZN', 'META', 'NFLX'];
 
         // Call main APIs in parallel
-        const [gainers, losers, trending] = await Promise.all([
+        const [gainers, losers, trending, status] = await Promise.all([
           fetchMarketMovers('gainers', 20),
           fetchMarketMovers('losers', 20),
-          fetchTrendingSymbols(20)
+          fetchTrendingSymbols(20),
+          fetchMarketStatus()
         ]);
+
+        setMarketStatus(status);
 
         // Pre-fetch quotes for popular stocks (non-blocking, don't wait for all)
         const popularQuotesPromises = popularSymbols.map(symbol => 
@@ -384,6 +388,26 @@ export default function Dashboard() {
     }
   }, [latestAISignal]);
 
+  // Update market status every minute
+  useEffect(() => {
+    const updateMarketStatus = async () => {
+      try {
+        const status = await fetchMarketStatus();
+        setMarketStatus(status);
+      } catch (error) {
+        console.error('Failed to fetch market status:', error);
+      }
+    };
+
+    // Initial fetch
+    updateMarketStatus();
+
+    // Update every minute
+    const interval = setInterval(updateMarketStatus, 60 * 1000);
+
+    return () => clearInterval(interval);
+  }, []);
+
   // Function to refresh market data - calls all APIs
   const refreshMarketData = async () => {
     try {
@@ -396,11 +420,14 @@ export default function Dashboard() {
       const popularSymbols = ['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'NVDA', 'AMZN', 'META', 'NFLX'];
 
       // Call all APIs in parallel
-      const [gainers, losers, trending] = await Promise.all([
+      const [gainers, losers, trending, status] = await Promise.all([
         fetchMarketMovers('gainers', 20),
         fetchMarketMovers('losers', 20),
-        fetchTrendingSymbols(20)
+        fetchTrendingSymbols(20),
+        fetchMarketStatus()
       ]);
+
+      setMarketStatus(status);
 
       // Pre-fetch quotes for popular stocks
       const popularQuotesPromises = popularSymbols.map(symbol => 
@@ -695,7 +722,12 @@ export default function Dashboard() {
         <div className="flex items-center gap-6 text-sm font-rajdhani font-medium text-muted-foreground">
           <div className="flex items-center gap-2">
             <Clock className="w-4 h-4 text-primary" />
-            <span>Market: <span className="text-white">OPEN</span></span>
+            <span>Market: <span className={marketStatus?.isOpen ? "text-green-400 animate-pulse" : "text-red-400"}>{marketStatus?.isOpen ? "OPEN" : "CLOSED"}</span></span>
+            {marketStatus && !marketStatus.isOpen && marketStatus.nextOpen && (
+              <span className="text-xs text-gray-400 ml-2">
+                Opens {new Date(marketStatus.nextOpen).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} ET
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-4 h-4 text-primary" />

@@ -149,3 +149,18 @@ export const fetchTechnicalIndicators = async (symbol: string, days: number = 30
   if (!response.ok) throw new Error('Failed to fetch technical indicators');
   return response.json();
 };
+
+// Market Status
+export interface MarketStatus {
+  isOpen: boolean;
+  nextOpen?: string;
+  nextClose?: string;
+  message: string;
+}
+
+export const fetchMarketStatus = async (): Promise<MarketStatus> => {
+  const apiUrl = getApiBaseUrl();
+  const response = await fetch(`${apiUrl}/api/market/status`);
+  if (!response.ok) throw new Error('Failed to fetch market status');
+  return response.json();
+};
