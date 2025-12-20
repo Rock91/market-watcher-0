@@ -27,12 +27,15 @@ export async function getStockQuoteController(req: Request, res: Response) {
       
       if (isFresh) {
         console.log(`[${new Date().toISOString()}] Returning cached quote for ${symbol} (${Math.round(cacheAge / 1000)}s old)`);
+        const changePercent = cachedQuote.change_percent || 0;
+        const change = cachedQuote.change || 0;
         return res.json({
           symbol: cachedQuote.symbol,
           name: '', // Name not stored in quotes table
           price: cachedQuote.price,
-          change: cachedQuote.change,
-          changePercent: cachedQuote.change_percent,
+          change: change, // Absolute change amount
+          changePercent: changePercent, // Percentage change
+          changeFormatted: `${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%`,
           volume: cachedQuote.volume,
           marketCap: cachedQuote.market_cap,
           peRatio: cachedQuote.pe_ratio,
@@ -51,8 +54,14 @@ export async function getStockQuoteController(req: Request, res: Response) {
     // Store in database for future requests
     await storeStockQuote(quote);
     
+    // Format response with both change and changePercent
+    const response = {
+      ...quote,
+      changeFormatted: `${quote.changePercent >= 0 ? '+' : ''}${quote.changePercent.toFixed(2)}%`
+    };
+    
     console.log(`[${new Date().toISOString()}] Quote fetched successfully for ${symbol}: $${quote.price?.toFixed(2)}`);
-    res.json(quote);
+    res.json(response);
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error fetching stock quote for ${symbol}:`, error);
     res.status(500).json({ error: 'Failed to fetch stock quote' });

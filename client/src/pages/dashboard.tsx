@@ -122,6 +122,19 @@ function isPositiveChange(change: string | number | undefined): boolean {
   return change > 0;
 }
 
+// Format change amount with currency
+function formatChangeAmount(change: number, currency: string = 'USD'): string {
+  const sign = change >= 0 ? '+' : '';
+  const symbol = currency === 'USD' ? '$' : currency + ' ';
+  return `${sign}${symbol}${Math.abs(change).toFixed(2)}`;
+}
+
+// Format percentage change
+function formatChangePercent(changePercent: number): string {
+  const sign = changePercent >= 0 ? '+' : '';
+  return `${sign}${changePercent.toFixed(2)}%`;
+}
+
 export default function Dashboard() {
   const [logs, setLogs] = useState<PredictionLog[]>([]);
   const [selectedStock, setSelectedStock] = useState<StockQuote | null>(null);
@@ -235,17 +248,19 @@ export default function Dashboard() {
         console.error('Error loading initial data:', err);
         setError('Failed to load market data. Using demo mode.');
         // Fallback to mock data if API fails
-        setTopGainers([
-          { symbol: "NVDA", name: "NVIDIA Corp", price: 145.32, change: "+12.4%", vol: "45M", currency: "USD" },
-          { symbol: "AMD", name: "Adv Micro Dev", price: 178.90, change: "+8.2%", vol: "22M", currency: "USD" },
-          { symbol: "PLTR", name: "Palantir Tech", price: 24.50, change: "+7.8%", vol: "18M", currency: "USD" },
-        ]);
-        setTopLosers([
-          { symbol: "INTC", name: "Intel Corp", price: 30.12, change: "-8.4%", vol: "30M", currency: "USD" },
-          { symbol: "WBA", name: "Walgreens Boots", price: 18.45, change: "-7.2%", vol: "10M", currency: "USD" },
-        ]);
+        const mockGainers = [
+          { symbol: "NVDA", name: "NVIDIA Corp", price: 145.32, change: 18.02, changePercent: 12.4, changeFormatted: "+12.4%", vol: "45M", currency: "USD" },
+          { symbol: "AMD", name: "Adv Micro Dev", price: 178.90, change: 14.67, changePercent: 8.2, changeFormatted: "+8.2%", vol: "22M", currency: "USD" },
+          { symbol: "PLTR", name: "Palantir Tech", price: 24.50, change: 1.91, changePercent: 7.8, changeFormatted: "+7.8%", vol: "18M", currency: "USD" },
+        ];
+        const mockLosers = [
+          { symbol: "INTC", name: "Intel Corp", price: 30.12, change: -2.53, changePercent: -8.4, changeFormatted: "-8.4%", vol: "30M", currency: "USD" },
+          { symbol: "WBA", name: "Walgreens Boots", price: 18.45, change: -1.33, changePercent: -7.2, changeFormatted: "-7.2%", vol: "10M", currency: "USD" },
+        ];
+        setTopGainers(mockGainers);
+        setTopLosers(mockLosers);
         if (!selectedStock) {
-          setSelectedStock({ symbol: "NVDA", name: "NVIDIA Corp", price: 145.32, change: "+12.4%", vol: "45M", currency: "USD" });
+          setSelectedStock(mockGainers[0]);
         }
       } finally {
         setLoading(false);
@@ -259,22 +274,34 @@ export default function Dashboard() {
   useEffect(() => {
     if (marketMovers && marketMovers.gainers && marketMovers.losers) {
       console.log('[WebSocket] Market movers update:', marketMovers.gainers.length, 'gainers,', marketMovers.losers.length, 'losers');
-      setTopGainers(marketMovers.gainers.map(mover => ({
-        symbol: mover.symbol,
-        name: mover.name,
-        price: mover.price,
-        change: mover.change,
-        vol: mover.volume || 'N/A',
-        currency: mover.currency || 'USD'
-      })));
-      setTopLosers(marketMovers.losers.map(mover => ({
-        symbol: mover.symbol,
-        name: mover.name,
-        price: mover.price,
-        change: mover.change,
-        vol: mover.volume || 'N/A',
-        currency: mover.currency || 'USD'
-      })));
+      setTopGainers(marketMovers.gainers.map(mover => {
+        const changePercent = typeof mover.changePercent === 'number' ? mover.changePercent : parseFloat(mover.change?.toString().replace('%', '') || '0');
+        const change = typeof mover.change === 'number' ? mover.change : (mover.price * changePercent) / 100;
+        return {
+          symbol: mover.symbol,
+          name: mover.name,
+          price: mover.price,
+          change: change,
+          changePercent: changePercent,
+          changeFormatted: formatChangePercent(changePercent),
+          vol: mover.volume || 'N/A',
+          currency: mover.currency || 'USD'
+        };
+      }));
+      setTopLosers(marketMovers.losers.map(mover => {
+        const changePercent = typeof mover.changePercent === 'number' ? mover.changePercent : parseFloat(mover.change?.toString().replace('%', '') || '0');
+        const change = typeof mover.change === 'number' ? mover.change : (mover.price * changePercent) / 100;
+        return {
+          symbol: mover.symbol,
+          name: mover.name,
+          price: mover.price,
+          change: change,
+          changePercent: changePercent,
+          changeFormatted: formatChangePercent(changePercent),
+          vol: mover.volume || 'N/A',
+          currency: mover.currency || 'USD'
+        };
+      }));
     }
   }, [marketMovers]);
 
@@ -295,7 +322,9 @@ export default function Dashboard() {
                 symbol: trending.symbol,
                 name: trending.name || trending.symbol,
                 price: 0,
-                change: '+0.00%',
+                change: 0,
+                changePercent: 0,
+                changeFormatted: '0%',
                 vol: '0',
                 currency: 'USD'
               } as StockQuote;
@@ -314,13 +343,20 @@ export default function Dashboard() {
       // Update all stocks with latest prices from WebSocket
       // Note: changePercent is already a percentage value (e.g., -11.85 for -11.85%)
       priceUpdates.forEach((update, symbol) => {
+        // Calculate absolute change from percentage
+        const changePercent = update.changePercent || 0;
+        const change = (update.price * changePercent) / 100;
+        const changeFormatted = formatChangePercent(changePercent);
+
         // Update gainers list
         setTopGainers(prev => prev.map(stock =>
           stock.symbol === symbol
             ? {
                 ...stock,
                 price: update.price,
-                change: `${update.changePercent >= 0 ? '+' : ''}${update.changePercent.toFixed(2)}%`
+                change: change,
+                changePercent: changePercent,
+                changeFormatted: changeFormatted
               }
             : stock
         ));
@@ -331,7 +367,9 @@ export default function Dashboard() {
             ? {
                 ...stock,
                 price: update.price,
-                change: `${update.changePercent >= 0 ? '+' : ''}${update.changePercent.toFixed(2)}%`
+                change: change,
+                changePercent: changePercent,
+                changeFormatted: changeFormatted
               }
             : stock
         ));
@@ -341,7 +379,9 @@ export default function Dashboard() {
           setSelectedStock(prev => prev ? {
             ...prev,
             price: update.price,
-            change: `${update.changePercent >= 0 ? '+' : ''}${update.changePercent.toFixed(2)}%`
+            change: change,
+            changePercent: changePercent,
+            changeFormatted: changeFormatted
           } : null);
         }
       });
@@ -489,16 +529,25 @@ export default function Dashboard() {
         const historicalData = await fetchHistoricalData(selectedStock.symbol, 30); // 30 days of daily data
         console.log(`[Chart] Received ${historicalData?.length || 0} data points for ${selectedStock.symbol}`, historicalData?.slice(0, 2));
         if (historicalData && historicalData.length > 0) {
-          setChartData(historicalData);
+          // Ensure all data points have date field for tooltip
+          const dataWithDates = historicalData.map((d: any) => ({
+            ...d,
+            date: d.date || d.time || new Date().toISOString()
+          }));
+          setChartData(dataWithDates);
         } else {
           // Fallback to generated data if no historical data
           const generatedData = [];
           let price = selectedStock.price;
+          const now = new Date();
           for (let i = 0; i < 20; i++) {
             price = price * (1 + (Math.random() * 0.04 - 0.02));
+            const date = new Date(now);
+            date.setDate(date.getDate() - (20 - i));
             generatedData.push({
-              time: `${9 + Math.floor(i/2)}:${i % 2 === 0 ? '00' : '30'}`,
-              price: price
+              time: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+              price: price,
+              date: date.toISOString() // Add date for tooltip
             });
           }
           setChartData(generatedData);
@@ -705,10 +754,13 @@ export default function Dashboard() {
           minutes = 0;
         }
 
-        newData.push({
+        const newPoint = {
           time: `${hours}:${minutes.toString().padStart(2, '0')}`,
-          price: newPrice
-        });
+          price: newPrice,
+          date: new Date().toISOString() // Add date for tooltip
+        };
+
+        newData.push(newPoint);
 
         return newData;
       });
@@ -864,9 +916,16 @@ export default function Dashboard() {
                 </p>
               </div>
               {selectedStock && (
-                <Badge variant="outline" className={`font-mono text-lg px-4 py-1 ${isPositiveChange(selectedStock.change) ? 'border-primary text-primary bg-primary/10' : 'border-destructive text-destructive bg-destructive/10'}`}>
-                  {selectedStock.change}
-                </Badge>
+                <div className="flex flex-col items-end gap-1">
+                  <Badge variant="outline" className={`font-mono text-sm px-3 py-1 ${isPositiveChange(selectedStock.change) ? 'border-primary text-primary bg-primary/10' : 'border-destructive text-destructive bg-destructive/10'}`}>
+                    {selectedStock.changeFormatted || formatChangePercent(selectedStock.changePercent || 0)}
+                  </Badge>
+                  {selectedStock.change !== undefined && (
+                    <span className={`text-xs font-mono ${isPositiveChange(selectedStock.change) ? 'text-primary' : 'text-destructive'}`}>
+                      {formatChangeAmount(selectedStock.change, selectedStock.currency)}
+                    </span>
+                  )}
+                </div>
               )}
             </CardHeader>
             <CardContent className="h-[calc(100%-80px)] w-full">
@@ -884,6 +943,26 @@ export default function Dashboard() {
                   <Tooltip 
                     contentStyle={{ backgroundColor: '#000', borderColor: '#333', color: '#fff' }}
                     itemStyle={{ color: '#fff' }}
+                    formatter={(value: any, name: string, props: any) => {
+                      const currency = selectedStock?.currency || 'USD';
+                      const symbol = currency === 'USD' ? '$' : currency + ' ';
+                      return [`${symbol}${Number(value).toFixed(2)}`, 'Price'];
+                    }}
+                    labelFormatter={(label: string) => {
+                      // Find the full date from chartData
+                      const dataPoint = chartData.find((d: any) => d.time === label);
+                      if (dataPoint && dataPoint.date) {
+                        const date = new Date(dataPoint.date);
+                        return date.toLocaleString('en-US', { 
+                          month: 'short', 
+                          day: 'numeric', 
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        });
+                      }
+                      return label;
+                    }}
                   />
                   <Area 
                     type="monotone" 
