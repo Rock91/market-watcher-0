@@ -24,14 +24,15 @@
 import 'dotenv/config';
 import { createClient } from '@clickhouse/client';
 import { CLICKHOUSE_CONFIG } from '../config/database';
+import { logScriptStart, logScriptEnd } from '../services/clickhouse';
 
 // Live (source) database configuration
 const LIVE_CONFIG = {
-  host: process.env.LIVE_CLICKHOUSE_HOST || CLICKHOUSE_CONFIG.host,
-  port: process.env.LIVE_CLICKHOUSE_PORT || CLICKHOUSE_CONFIG.port,
-  username: process.env.LIVE_CLICKHOUSE_USERNAME || CLICKHOUSE_CONFIG.username,
-  password: process.env.LIVE_CLICKHOUSE_PASSWORD || CLICKHOUSE_CONFIG.password,
-  database: process.env.LIVE_CLICKHOUSE_DATABASE || CLICKHOUSE_CONFIG.database,
+  host: process.env.CLICKHOUSE_HOST || CLICKHOUSE_CONFIG.host,
+  port: process.env.CLICKHOUSE_PORT || CLICKHOUSE_CONFIG.port,
+  username: process.env.CLICKHOUSE_USERNAME || CLICKHOUSE_CONFIG.username,
+  password: process.env.CLICKHOUSE_PASSWORD || CLICKHOUSE_CONFIG.password,
+  database: process.env.CLICKHOUSE_DATABASE || CLICKHOUSE_CONFIG.database,
 };
 
 // Local (destination) database configuration
@@ -74,6 +75,7 @@ const TABLES_TO_MIGRATE = [
   'stock_quotes',        // Depends on tracked_symbols (symbols)
   'market_movers',       // Depends on tracked_symbols (symbols)
   'trending_symbols',    // No dependencies
+  'script_execution_log', // Script execution tracking
 ];
 
 // Logging helper
@@ -212,6 +214,25 @@ async function initializeLocalDatabase(): Promise<void> {
             INDEX symbol_bf symbol TYPE bloom_filter GRANULARITY 1
           ) ENGINE = ReplacingMergeTree(last_seen)
           ORDER BY symbol
+        `,
+      },
+      {
+        name: 'script_execution_log',
+        schema: `
+          CREATE TABLE IF NOT EXISTS ${LOCAL_CONFIG.database}.script_execution_log (
+            script_name LowCardinality(String),
+            status LowCardinality(String),
+            started_at DateTime,
+            completed_at Nullable(DateTime),
+            duration_ms Nullable(UInt64),
+            rows_affected Nullable(UInt64),
+            error_message Nullable(String),
+            metadata Nullable(String),
+            updated_at DateTime DEFAULT now()
+          ) ENGINE = ReplacingMergeTree(updated_at)
+          PARTITION BY toYYYYMM(started_at)
+          ORDER BY (script_name, started_at)
+          TTL started_at + INTERVAL 1 YEAR
         `,
       },
     ];
@@ -380,6 +401,17 @@ async function migrateTable(tableName: string, batchSize: number = 10000): Promi
 
 // Main migration function
 async function migrate(): Promise<void> {
+  const scriptName = 'migrateClickHouse';
+  const startedAt = new Date();
+  let totalRowsMigrated = 0;
+
+  // Log script start
+  await logScriptStart(scriptName, {
+    source: `${LIVE_CONFIG.host}:${LIVE_CONFIG.port}/${LIVE_CONFIG.database}`,
+    destination: `${LOCAL_CONFIG.host}:${LOCAL_CONFIG.port}/${LOCAL_CONFIG.database}`,
+    tables: TABLES_TO_MIGRATE,
+  });
+
   log('='.repeat(60));
   log('ClickHouse Database Migration Script');
   log('='.repeat(60));
@@ -404,7 +436,10 @@ async function migrate(): Promise<void> {
 
     // Migrate each table
     for (const table of TABLES_TO_MIGRATE) {
+      const beforeCount = await getRowCount(localClient, LOCAL_CONFIG.database, table);
       await migrateTable(table);
+      const afterCount = await getRowCount(localClient, LOCAL_CONFIG.database, table);
+      totalRowsMigrated += (afterCount - beforeCount);
     }
 
     log('\n' + '='.repeat(60));
@@ -418,8 +453,28 @@ async function migrate(): Promise<void> {
       log(`  ${table}: ${localCount.toLocaleString()} rows`);
     }
 
+    // Log successful completion
+    await logScriptEnd(scriptName, startedAt, 'success', totalRowsMigrated, undefined, {
+      tables_migrated: TABLES_TO_MIGRATE.length,
+      final_counts: Object.fromEntries(
+        await Promise.all(
+          TABLES_TO_MIGRATE.map(async (table) => [
+            table,
+            await getRowCount(localClient, LOCAL_CONFIG.database, table),
+          ])
+        )
+      ),
+    });
+
   } catch (err: any) {
     error(`Migration failed: ${err.message}`);
+    
+    // Log failure
+    await logScriptEnd(scriptName, startedAt, 'failed', totalRowsMigrated, err.message, {
+      error_type: err.constructor.name,
+      stack: err.stack,
+    });
+
     process.exit(1);
   } finally {
     // Close connections

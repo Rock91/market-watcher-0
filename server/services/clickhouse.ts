@@ -164,6 +164,27 @@ export async function initializeClickHouse() {
       `,
     });
 
+    // Create script_execution_log table for tracking script runs
+    // Using ReplacingMergeTree with updated_at to allow updates
+    await clickhouseClient.exec({
+      query: `
+        CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}.script_execution_log (
+          script_name LowCardinality(String),
+          status LowCardinality(String), -- 'success', 'failed', 'running'
+          started_at DateTime,
+          completed_at Nullable(DateTime),
+          duration_ms Nullable(UInt64), -- Duration in milliseconds
+          rows_affected Nullable(UInt64),
+          error_message Nullable(String),
+          metadata Nullable(String), -- JSON string for additional info
+          updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        PARTITION BY toYYYYMM(started_at)
+        ORDER BY (script_name, started_at)
+        TTL started_at + INTERVAL 1 YEAR
+      `,
+    });
+
     // Best-effort: apply optimizations to existing tables (safe to ignore failures)
     const tryExec = async (query: string) => {
       try {
@@ -652,5 +673,170 @@ export async function getSymbolsNeedingBackfill(targetDays: number = 365): Promi
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error getting symbols needing backfill:`, error);
     return [];
+  }
+}
+
+// Script execution logging functions
+export interface ScriptExecutionLog {
+  script_name: string;
+  status: 'success' | 'failed' | 'running';
+  started_at: Date;
+  completed_at?: Date;
+  duration_ms?: number;
+  rows_affected?: number;
+  error_message?: string;
+  metadata?: Record<string, any>;
+}
+
+// Start logging a script execution
+export async function logScriptStart(scriptName: string, metadata?: Record<string, any>): Promise<string | null> {
+  try {
+    const startedAt = new Date();
+    const logEntry = {
+      script_name: scriptName,
+      status: 'running',
+      started_at: startedAt,
+      metadata: metadata ? JSON.stringify(metadata) : null,
+    };
+
+    await clickhouseClient.insert({
+      table: `${CLICKHOUSE_CONFIG.database}.script_execution_log`,
+      values: [logEntry],
+      format: 'JSONEachRow',
+    });
+
+    // Return a unique identifier (we'll use started_at as identifier)
+    return startedAt.toISOString();
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error logging script start for ${scriptName}:`, error);
+    return null;
+  }
+}
+
+// Update script execution log with completion status
+// Using ReplacingMergeTree, inserting with same script_name and started_at will replace the record
+export async function logScriptEnd(
+  scriptName: string,
+  startedAt: Date,
+  status: 'success' | 'failed',
+  rowsAffected?: number,
+  errorMessage?: string,
+  metadata?: Record<string, any>
+): Promise<void> {
+  try {
+    const completedAt = new Date();
+    const durationMs = completedAt.getTime() - startedAt.getTime();
+
+    // Insert completion record - ReplacingMergeTree will replace the 'running' record
+    await clickhouseClient.insert({
+      table: `${CLICKHOUSE_CONFIG.database}.script_execution_log`,
+      values: [{
+        script_name: scriptName,
+        status,
+        started_at: startedAt,
+        completed_at: completedAt,
+        duration_ms: durationMs,
+        rows_affected: rowsAffected || null,
+        error_message: errorMessage || null,
+        metadata: metadata ? JSON.stringify(metadata) : null,
+      }],
+      format: 'JSONEachRow',
+    });
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error logging script end for ${scriptName}:`, error);
+  }
+}
+
+// Get script execution history
+export async function getScriptExecutionHistory(
+  scriptName?: string,
+  limit: number = 50
+): Promise<ScriptExecutionLog[]> {
+  try {
+    let query = `
+      SELECT 
+        script_name,
+        status,
+        started_at,
+        completed_at,
+        duration_ms,
+        rows_affected,
+        error_message,
+        metadata
+      FROM ${CLICKHOUSE_CONFIG.database}.script_execution_log
+    `;
+
+    const queryParams: any = { limit };
+
+    if (scriptName) {
+      query += ` WHERE script_name = {script_name:String}`;
+      queryParams.script_name = scriptName;
+    }
+
+    query += ` ORDER BY started_at DESC LIMIT {limit:UInt32}`;
+
+    const result = await clickhouseClient.query({
+      query,
+      query_params: queryParams,
+      format: 'JSONEachRow',
+    });
+
+    const data: any = await result.json();
+    return data.map((row: any) => ({
+      script_name: row.script_name,
+      status: row.status,
+      started_at: new Date(row.started_at),
+      completed_at: row.completed_at ? new Date(row.completed_at) : undefined,
+      duration_ms: row.duration_ms ? Number(row.duration_ms) : undefined,
+      rows_affected: row.rows_affected ? Number(row.rows_affected) : undefined,
+      error_message: row.error_message || undefined,
+      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+    }));
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error getting script execution history:`, error);
+    return [];
+  }
+}
+
+// Get latest script execution status
+export async function getLatestScriptExecution(scriptName: string): Promise<ScriptExecutionLog | null> {
+  try {
+    const result = await clickhouseClient.query({
+      query: `
+        SELECT 
+          script_name,
+          status,
+          started_at,
+          completed_at,
+          duration_ms,
+          rows_affected,
+          error_message,
+          metadata
+        FROM ${CLICKHOUSE_CONFIG.database}.script_execution_log
+        WHERE script_name = {script_name:String}
+        ORDER BY started_at DESC
+        LIMIT 1
+      `,
+      query_params: { script_name: scriptName },
+      format: 'JSONEachRow',
+    });
+
+    const data: any = await result.json();
+    if (data.length === 0) return null;
+
+    const row = data[0];
+    return {
+      script_name: row.script_name,
+      status: row.status,
+      started_at: new Date(row.started_at),
+      completed_at: row.completed_at ? new Date(row.completed_at) : undefined,
+      duration_ms: row.duration_ms ? Number(row.duration_ms) : undefined,
+      rows_affected: row.rows_affected ? Number(row.rows_affected) : undefined,
+      error_message: row.error_message || undefined,
+      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+    };
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error getting latest script execution for ${scriptName}:`, error);
+    return null;
   }
 }

@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { clickhouseClient } from '../../services/clickhouse';
 import { CLICKHOUSE_CONFIG } from '../../config/database';
+import { getScriptExecutionHistory, getLatestScriptExecution } from '../../services/clickhouse';
 
 async function timedJsonQuery(query: string, query_params?: Record<string, any>) {
   const startedAt = Date.now();
@@ -76,4 +77,56 @@ export async function getClickhouseHealthController(_req: Request, res: Response
   }
 }
 
+// Get script execution history
+export async function getScriptExecutionHistoryController(req: Request, res: Response) {
+  try {
+    const { script_name, limit } = req.query;
+    const history = await getScriptExecutionHistory(
+      script_name as string | undefined,
+      limit ? parseInt(limit as string, 10) : 50
+    );
+
+    res.json({
+      ok: true,
+      count: history.length,
+      scripts: history,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      ok: false,
+      error: error?.message || String(error),
+    });
+  }
+}
+
+// Get latest script execution for a specific script
+export async function getLatestScriptExecutionController(req: Request, res: Response) {
+  try {
+    const { script_name } = req.params;
+    if (!script_name) {
+      return res.status(400).json({
+        ok: false,
+        error: 'script_name parameter is required',
+      });
+    }
+
+    const latest = await getLatestScriptExecution(script_name);
+    if (!latest) {
+      return res.status(404).json({
+        ok: false,
+        error: `No execution history found for script: ${script_name}`,
+      });
+    }
+
+    res.json({
+      ok: true,
+      script: latest,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      ok: false,
+      error: error?.message || String(error),
+    });
+  }
+}
 
