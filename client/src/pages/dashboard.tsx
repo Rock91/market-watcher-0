@@ -404,54 +404,82 @@ export default function Dashboard() {
           } : null);
           
           // Update chart in real-time if market is open and in real-time mode
-          // Throttle updates to avoid too frequent chart redraws
+          // Use actual timestamp from update, not current time
           if (marketStatus?.isOpen && isRealTimeMode) {
-            const now = Date.now();
-            if (now - lastUpdateTimeRef.current >= updateThrottleMs) {
-              lastUpdateTimeRef.current = now;
+            const updateTimestamp = update.timestamp || Date.now();
+            const updateDate = new Date(updateTimestamp);
+            
+            // Only add data point if it's actually new (not duplicate timestamp)
+            setChartData(prev => {
+              // Check if we already have data for this timestamp (within 1 second)
+              const existingIndex = prev.findIndex((d: any) => {
+                const dataTime = d.timestamp ? new Date(d.timestamp).getTime() : new Date(d.date).getTime();
+                return Math.abs(dataTime - updateTimestamp) < 1000; // Within 1 second
+              });
               
-              setChartData(prev => {
-                const newData = [...prev];
-                const dateNow = new Date();
-                
-                // Format time based on chart hours - show seconds for short periods, minutes for longer
-                let timeStr: string;
-                if (chartHours <= 1) {
-                  // For 1 hour or less, show seconds
-                  timeStr = dateNow.toLocaleTimeString('en-US', { 
-                    hour: '2-digit', 
-                    minute: '2-digit',
-                    second: '2-digit',
-                    hour12: false 
-                  });
-                } else {
-                  // For longer periods, show minutes
-                  timeStr = dateNow.toLocaleTimeString('en-US', { 
-                    hour: '2-digit', 
-                    minute: '2-digit',
-                    hour12: false 
-                  });
-                }
-                
+              let newData = [...prev];
+              
+              // Format time based on chart hours - show seconds for short periods, minutes for longer
+              let timeStr: string;
+              if (chartHours <= 1) {
+                // For 1 hour or less, show seconds
+                timeStr = updateDate.toLocaleTimeString('en-US', { 
+                  hour: '2-digit', 
+                  minute: '2-digit',
+                  second: '2-digit',
+                  hour12: false,
+                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                });
+              } else {
+                // For longer periods, show minutes
+                timeStr = updateDate.toLocaleTimeString('en-US', { 
+                  hour: '2-digit', 
+                  minute: '2-digit',
+                  hour12: false,
+                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                });
+              }
+              
+              // Update existing point or add new one
+              if (existingIndex >= 0) {
+                // Update existing data point
+                newData[existingIndex] = {
+                  ...newData[existingIndex],
+                  time: timeStr,
+                  price: update.price,
+                  date: updateDate.toISOString(),
+                  timestamp: updateTimestamp,
+                  volume: update.volume || newData[existingIndex].volume || 0,
+                  change: change,
+                  changePercent: changePercent
+                };
+              } else {
                 // Add new data point
                 newData.push({
                   time: timeStr,
                   price: update.price,
-                  date: dateNow.toISOString(),
-                  timestamp: update.timestamp || dateNow.getTime(),
+                  date: updateDate.toISOString(),
+                  timestamp: updateTimestamp,
                   volume: update.volume || 0,
                   change: change,
                   changePercent: changePercent
                 });
-                
-                // Keep only data within the selected time range
-                const cutoffTime = dateNow.getTime() - (chartHours * 60 * 60 * 1000);
-                return newData.filter((d: any) => {
-                  const dataTime = d.timestamp ? new Date(d.timestamp).getTime() : new Date(d.date).getTime();
-                  return dataTime >= cutoffTime;
-                });
+              }
+              
+              // Sort by timestamp to keep data in order
+              newData.sort((a: any, b: any) => {
+                const timeA = a.timestamp ? new Date(a.timestamp).getTime() : new Date(a.date).getTime();
+                const timeB = b.timestamp ? new Date(b.timestamp).getTime() : new Date(b.date).getTime();
+                return timeA - timeB;
               });
-            }
+              
+              // Keep only data within the selected time range
+              const cutoffTime = updateDate.getTime() - (chartHours * 60 * 60 * 1000);
+              return newData.filter((d: any) => {
+                const dataTime = d.timestamp ? new Date(d.timestamp).getTime() : new Date(d.date).getTime();
+                return dataTime >= cutoffTime;
+              });
+            });
           }
         }
       });
@@ -633,8 +661,19 @@ export default function Dashboard() {
         
         if (intradayData && intradayData.length > 0) {
           // Format time labels based on data granularity
+          // Use system timezone for consistency
+          const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
           const formattedData = intradayData.map((d: any) => {
-            const timestamp = d.timestamp ? new Date(d.timestamp) : new Date(d.date);
+            // Use timestamp from data, or parse date string
+            let timestamp: Date;
+            if (d.timestamp) {
+              timestamp = new Date(d.timestamp);
+            } else if (d.date) {
+              timestamp = new Date(d.date);
+            } else {
+              timestamp = new Date();
+            }
+            
             let timeStr: string;
             
             if (chartHours <= 1) {
@@ -643,21 +682,24 @@ export default function Dashboard() {
                 hour: '2-digit', 
                 minute: '2-digit',
                 second: '2-digit',
-                hour12: false 
+                hour12: false,
+                timeZone: timeZone
               });
             } else if (chartHours <= 6) {
               // For 2-6 hours, show minutes
               timeStr = timestamp.toLocaleTimeString('en-US', { 
                 hour: '2-digit', 
                 minute: '2-digit',
-                hour12: false 
+                hour12: false,
+                timeZone: timeZone
               });
             } else {
               // For longer periods, show hours and minutes
               timeStr = timestamp.toLocaleTimeString('en-US', { 
                 hour: '2-digit', 
                 minute: '2-digit',
-                hour12: false 
+                hour12: false,
+                timeZone: timeZone
               });
             }
             
@@ -667,6 +709,13 @@ export default function Dashboard() {
               date: d.date || timestamp.toISOString(),
               timestamp: d.timestamp || timestamp.getTime()
             };
+          });
+          
+          // Sort by timestamp to ensure correct order
+          formattedData.sort((a: any, b: any) => {
+            const timeA = a.timestamp ? new Date(a.timestamp).getTime() : new Date(a.date).getTime();
+            const timeB = b.timestamp ? new Date(b.timestamp).getTime() : new Date(b.date).getTime();
+            return timeA - timeB;
           });
           
           setChartData(formattedData);
@@ -745,8 +794,17 @@ export default function Dashboard() {
           const intradayData = await fetchIntradayData(selectedStock.symbol, chartHours, 1000);
           
           if (intradayData && intradayData.length > 0) {
+            const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
             const formattedData = intradayData.map((d: any) => {
-              const timestamp = d.timestamp ? new Date(d.timestamp) : new Date(d.date);
+              let timestamp: Date;
+              if (d.timestamp) {
+                timestamp = new Date(d.timestamp);
+              } else if (d.date) {
+                timestamp = new Date(d.date);
+              } else {
+                timestamp = new Date();
+              }
+              
               let timeStr: string;
               
               if (chartHours <= 1) {
@@ -754,13 +812,15 @@ export default function Dashboard() {
                   hour: '2-digit', 
                   minute: '2-digit',
                   second: '2-digit',
-                  hour12: false 
+                  hour12: false,
+                  timeZone: timeZone
                 });
               } else {
                 timeStr = timestamp.toLocaleTimeString('en-US', { 
                   hour: '2-digit', 
                   minute: '2-digit',
-                  hour12: false 
+                  hour12: false,
+                  timeZone: timeZone
                 });
               }
               
@@ -770,6 +830,13 @@ export default function Dashboard() {
                 date: d.date || timestamp.toISOString(),
                 timestamp: d.timestamp || timestamp.getTime()
               };
+            });
+            
+            // Sort by timestamp
+            formattedData.sort((a: any, b: any) => {
+              const timeA = a.timestamp ? new Date(a.timestamp).getTime() : new Date(a.date).getTime();
+              const timeB = b.timestamp ? new Date(b.timestamp).getTime() : new Date(b.date).getTime();
+              return timeA - timeB;
             });
             
             setChartData(formattedData);
