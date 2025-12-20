@@ -11,6 +11,8 @@ import {
   WebSocketEventType
 } from './types';
 import { generateAISignal, type MarketData } from '../services/ai-strategies';
+import { storeAISignal, type AISignal } from '../services/clickhouse';
+import { v4 as uuidv4 } from 'uuid';
 import { getHistoricalData } from '../services/yahooFinance';
 import { getStockHistory, getHistoricalData as getDbHistoricalData } from '../services/clickhouse';
 import { v4 as uuidv4 } from 'uuid';
@@ -188,6 +190,29 @@ async function handleAISignalRequest(ws: ExtendedWebSocket, data: RequestAISigna
         ? currentPrice * (1 + volatility * 3)
         : currentPrice * (1 - volatility * 3)
     };
+
+    // Store signal in database if confidence > 75% and action is not HOLD
+    if (signal.confidence > 75 && signal.action !== 'HOLD') {
+      try {
+        const aiSignal: AISignal = {
+          signalId: uuidv4(),
+          timestamp: new Date(),
+          symbol,
+          strategy,
+          action: signal.action as 'BUY' | 'SELL',
+          confidence: signal.confidence,
+          reason: signal.reason,
+          price: currentPrice,
+          status: 'pending',
+        };
+        
+        await storeAISignal(aiSignal);
+        console.log(`[${new Date().toISOString()}] AI signal stored in database for ${symbol}`);
+      } catch (storeError) {
+        console.error(`[${new Date().toISOString()}] Error storing AI signal:`, storeError);
+        // Don't fail the request if storage fails
+      }
+    }
 
     const aiSignalMessage: AISignalMessage = {
       type: 'ai_signal',

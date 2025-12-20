@@ -3,9 +3,13 @@ export interface StockQuote {
   symbol: string;
   name: string;
   price: number;
-  change: string;
+  change: number; // Absolute change amount (e.g., 2.50 for +$2.50)
+  changePercent: number; // Percentage change (e.g., 2.5 for +2.5%)
+  changeFormatted?: string; // Formatted string for display (e.g., "+2.5%")
   vol: string;
+  volume?: number;
   currency?: string;
+  previousClose?: number;
 }
 
 export interface HistoricalData {

@@ -22,14 +22,21 @@ export async function getMarketMoversController(req: Request, res: Response) {
       console.log(`[${new Date().toISOString()}] Returning cached ${type} market movers`);
       // Transform ClickHouse format to expected format
       // Note: change_percent is already a percentage value (e.g., -11.85 for -11.85%)
-      const transformedMovers = cachedMovers.map((mover: any) => ({
-        symbol: mover.symbol,
-        name: mover.name,
-        price: mover.price,
-        change: `${mover.change_percent >= 0 ? '+' : ''}${mover.change_percent.toFixed(2)}%`,
-        vol: 'N/A', // Volume not stored in ClickHouse market_movers table
-        currency: 'USD'
-      }));
+      const transformedMovers = cachedMovers.map((mover: any) => {
+        const changePercent = mover.change_percent || 0;
+        // Calculate absolute change from percentage and price
+        const change = (mover.price * changePercent) / 100;
+        return {
+          symbol: mover.symbol,
+          name: mover.name,
+          price: mover.price,
+          change: change, // Absolute change amount
+          changePercent: changePercent, // Percentage change
+          changeFormatted: `${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%`,
+          vol: 'N/A', // Volume not stored in ClickHouse market_movers table
+          currency: 'USD'
+        };
+      });
       return res.json(transformedMovers);
     }
 
@@ -39,14 +46,21 @@ export async function getMarketMoversController(req: Request, res: Response) {
 
     // Transform to expected format for frontend
     // Note: changePercent is already a percentage value (e.g., -11.85 for -11.85%)
-    const formattedMovers = newMovers.map((mover: any) => ({
-      symbol: mover.symbol,
-      name: mover.name,
-      price: mover.price,
-      change: `${mover.changePercent >= 0 ? '+' : ''}${mover.changePercent.toFixed(2)}%`,
-      vol: mover.volume ? `${(mover.volume / 1000000).toFixed(1)}M` : 'N/A',
-      currency: mover.currency || 'USD'
-    }));
+    const formattedMovers = newMovers.map((mover: any) => {
+      const changePercent = mover.changePercent || 0;
+      // Calculate absolute change from percentage and price
+      const change = (mover.price * changePercent) / 100;
+      return {
+        symbol: mover.symbol,
+        name: mover.name,
+        price: mover.price,
+        change: change, // Absolute change amount
+        changePercent: changePercent, // Percentage change
+        changeFormatted: `${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%`,
+        vol: mover.volume ? `${(mover.volume / 1000000).toFixed(1)}M` : 'N/A',
+        currency: mover.currency || 'USD'
+      };
+    });
 
     // Store in ClickHouse for future requests (store original format)
     if (newMovers.length > 0) {
