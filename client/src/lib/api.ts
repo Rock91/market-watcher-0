@@ -196,3 +196,62 @@ export const fetchMarketStatus = async (): Promise<MarketStatus> => {
   if (!response.ok) throw new Error('Failed to fetch market status');
   return response.json();
 };
+
+// Trade Management
+export interface TradeRequest {
+  symbol: string;
+  action: 'BUY' | 'SELL';
+  price: number;
+  quantity?: number;
+  amount: number;
+  confidence: number;
+  strategy?: string;
+  reason?: string;
+  signalId?: string;
+}
+
+export interface TradeResponse {
+  tradeId: string;
+  symbol: string;
+  action: 'BUY' | 'SELL';
+  price: number;
+  quantity: number;
+  amount: number;
+  profit?: number;
+  time: string;
+  status: string;
+  confidence?: number;
+  strategy?: string;
+}
+
+export const storeTrade = async (trade: TradeRequest): Promise<TradeResponse> => {
+  const apiUrl = getApiBaseUrl();
+  const response = await fetch(`${apiUrl}/api/trades`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(trade)
+  });
+  if (!response.ok) throw new Error('Failed to store trade');
+  return response.json();
+};
+
+export const fetchTrades = async (symbol?: string, status?: string, limit: number = 50): Promise<TradeResponse[]> => {
+  const apiUrl = getApiBaseUrl();
+  const params = new URLSearchParams();
+  if (symbol) params.append('symbol', symbol);
+  if (status) params.append('status', status);
+  params.append('limit', limit.toString());
+  
+  const response = await fetch(`${apiUrl}/api/trades?${params.toString()}`);
+  if (!response.ok) throw new Error('Failed to fetch trades');
+  return response.json();
+};
+
+export const fetchRecentTrades = async (limit: number = 50): Promise<TradeResponse[]> => {
+  const apiUrl = getApiBaseUrl();
+  const response = await fetch(`${apiUrl}/api/trades/recent?limit=${limit}`);
+  if (!response.ok) throw new Error('Failed to fetch recent trades');
+  return response.json();
+};

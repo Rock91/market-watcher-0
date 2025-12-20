@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { motion, AnimatePresence } from "framer-motion";
-import { fetchStockQuote, fetchHistoricalData, fetchIntradayData, fetchMarketMovers, fetchTrendingSymbols, fetchAISignal, fetchTechnicalIndicators, fetchMarketStatus, type StockQuote, type TechnicalIndicatorsResponse, type MarketStatus } from "@/lib/api";
+import { fetchStockQuote, fetchHistoricalData, fetchIntradayData, fetchMarketMovers, fetchTrendingSymbols, fetchAISignal, fetchTechnicalIndicators, fetchMarketStatus, storeTrade, fetchRecentTrades, type StockQuote, type TechnicalIndicatorsResponse, type MarketStatus, type TradeResponse } from "@/lib/api";
 import { useWebSocket, type PriceUpdate, type MarketMover, type AISignal, type TrendingSymbol } from "@/hooks/use-websocket";
 
 // Mock Data Generators
@@ -239,6 +239,34 @@ export default function Dashboard() {
           trending: trending.symbols?.length || 0,
           popularQuotes: popularQuotes.filter(q => q !== null).length
         });
+
+        // Load recent trades from database
+        try {
+          const dbTrades = await fetchRecentTrades(50);
+          if (dbTrades && dbTrades.length > 0) {
+            // Convert database trades to Transaction format
+            const dbTransactions: Transaction[] = dbTrades.map(trade => ({
+              id: parseInt(trade.tradeId.replace(/-/g, '').substring(0, 13)) || Date.now(),
+              symbol: trade.symbol,
+              action: trade.action,
+              amount: trade.amount,
+              profit: trade.profit || 0,
+              time: new Date(trade.time).toLocaleTimeString()
+            }));
+            setTransactions(prev => {
+              // Merge with existing transactions, avoiding duplicates
+              const merged = [...dbTransactions, ...prev];
+              const unique = merged.filter((tx, index, self) => 
+                index === self.findIndex(t => t.id === tx.id && t.symbol === tx.symbol && t.time === tx.time)
+              );
+              return unique.slice(0, 50);
+            });
+            console.log(`[Dashboard] Loaded ${dbTrades.length} trades from database`);
+          }
+        } catch (error) {
+          console.error('Failed to load trades from database:', error);
+          // Continue - trades will still work locally
+        }
         
         // Debug: Log first few items from each array
         console.log('[Dashboard] Sample gainers:', gainers.slice(0, 3));
@@ -261,6 +289,34 @@ export default function Dashboard() {
         const successfulQuotes = popularQuotes.filter(q => q !== null);
         if (successfulQuotes.length > 0) {
           console.log('[Dashboard] Pre-fetched quotes:', successfulQuotes.map((q: any) => `${q.symbol}: $${q.price?.toFixed(2)}`).join(', '));
+        }
+
+        // Load recent trades from database
+        try {
+          const dbTrades = await fetchRecentTrades(50);
+          if (dbTrades && dbTrades.length > 0) {
+            // Convert database trades to Transaction format
+            const dbTransactions: Transaction[] = dbTrades.map(trade => ({
+              id: parseInt(trade.tradeId.replace(/-/g, '').substring(0, 13)) || Date.now(),
+              symbol: trade.symbol,
+              action: trade.action,
+              amount: trade.amount,
+              profit: trade.profit || 0,
+              time: new Date(trade.time).toLocaleTimeString()
+            }));
+            setTransactions(prev => {
+              // Merge with existing transactions, avoiding duplicates
+              const merged = [...dbTransactions, ...prev];
+              const unique = merged.filter((tx, index, self) => 
+                index === self.findIndex(t => t.id === tx.id && t.symbol === tx.symbol && t.time === tx.time)
+              );
+              return unique.slice(0, 50);
+            });
+            console.log(`[Dashboard] Loaded ${dbTrades.length} trades from database`);
+          }
+        } catch (error) {
+          console.error('Failed to load trades from database:', error);
+          // Continue - trades will still work locally
         }
 
       } catch (err) {
@@ -529,6 +585,32 @@ export default function Dashboard() {
           time: new Date().toLocaleTimeString()
         };
         setTransactions(prev => [newTransaction, ...prev].slice(0, 50));
+
+        // Store trade in database (async, don't await)
+        (async () => {
+          try {
+            const currentPrice = topGainers.find(s => s.symbol === signal.symbol)?.price || 
+                                topLosers.find(s => s.symbol === signal.symbol)?.price ||
+                                trendingStocks.find(s => s.symbol === signal.symbol)?.price ||
+                                0;
+            
+            if (currentPrice > 0) {
+              await storeTrade({
+                symbol: signal.symbol,
+                action: signal.action as "BUY" | "SELL",
+                price: currentPrice,
+                amount: investment,
+                confidence: signal.confidence,
+                strategy: signal.strategy || 'dashboard',
+                reason: signal.reason
+              });
+              console.log(`[Dashboard] Stored trade in database: ${signal.symbol} ${signal.action}`);
+            }
+          } catch (error) {
+            console.error('Failed to store trade in database:', error);
+            // Continue even if storage fails - trade is still in local state
+          }
+        })();
       }
 
       console.log(`[WebSocket] AI Signal: ${signal.symbol} ${signal.action} (${signal.confidence.toFixed(1)}%) - ${signal.strategy}`);
@@ -917,6 +999,25 @@ export default function Dashboard() {
             time: new Date().toLocaleTimeString()
           };
           setTransactions(prev => [newTransaction, ...prev].slice(0, 50));
+
+          // Store trade in database (async, don't await)
+          (async () => {
+            try {
+              await storeTrade({
+                symbol: randomStock.symbol,
+                action: action as "BUY" | "SELL",
+                price: currentPrice,
+                amount: investment,
+                confidence: confidence,
+                strategy: aiStrategyRef.current,
+                reason: reason
+              });
+              console.log(`[Dashboard] Stored trade in database: ${randomStock.symbol} ${action}`);
+            } catch (error) {
+              console.error('Failed to store trade in database:', error);
+              // Continue even if storage fails
+            }
+          })();
         }
       } catch (error) {
         console.error('AI signal generation error:', error);
@@ -975,6 +1076,25 @@ export default function Dashboard() {
             time: new Date().toLocaleTimeString()
           };
           setTransactions(prev => [newTransaction, ...prev].slice(0, 50));
+
+          // Store trade in database (async, don't await)
+          (async () => {
+            try {
+              await storeTrade({
+                symbol: randomStock.symbol,
+                action: action as "BUY" | "SELL",
+                price: randomStock.price,
+                amount: investment,
+                confidence: confidence,
+                strategy: strategy,
+                reason: reason
+              });
+              console.log(`[Dashboard] Stored trade in database: ${randomStock.symbol} ${action}`);
+            } catch (error) {
+              console.error('Failed to store trade in database:', error);
+              // Continue even if storage fails
+            }
+          })();
         }
       }
     }, 3000); // New prediction every 3 seconds
