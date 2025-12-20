@@ -151,8 +151,8 @@ export default function Dashboard() {
   const [indicators, setIndicators] = useState<TechnicalIndicatorsResponse | null>(null);
   const [indicatorsLoading, setIndicatorsLoading] = useState(false);
   const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
-  const [chartHours, setChartHours] = useState(2); // Default: last 2 hours
-  const [isRealTimeMode, setIsRealTimeMode] = useState(true);
+  const [chartHours, setChartHours] = useState(2); // Default: last 2 hours (or 24 if market closed)
+  const [isRealTimeMode, setIsRealTimeMode] = useState(true); // Default: LIVE mode
 
   // WebSocket connection for real-time updates with all event types
   const { 
@@ -485,6 +485,25 @@ export default function Dashboard() {
       try {
         const status = await fetchMarketStatus();
         setMarketStatus(status);
+        
+        // Auto-adjust chart hours and real-time mode based on market status
+        if (status.isOpen) {
+          // Market is open: use 2 hours and enable real-time
+          if (chartHours !== 2) {
+            setChartHours(2);
+          }
+          if (!isRealTimeMode) {
+            setIsRealTimeMode(true);
+          }
+        } else {
+          // Market is closed: use 24 hours and disable real-time
+          if (chartHours !== 24) {
+            setChartHours(24);
+          }
+          if (isRealTimeMode) {
+            setIsRealTimeMode(false);
+          }
+        }
       } catch (error) {
         console.error('Failed to fetch market status:', error);
       }
@@ -497,7 +516,7 @@ export default function Dashboard() {
     const interval = setInterval(updateMarketStatus, 60 * 1000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [chartHours, isRealTimeMode]);
 
   // Function to refresh market data - calls all APIs
   const refreshMarketData = async () => {
@@ -998,9 +1017,18 @@ export default function Dashboard() {
                 <Button
                   variant={isRealTimeMode ? "default" : "outline"}
                   size="sm"
-                  onClick={() => setIsRealTimeMode(!isRealTimeMode)}
+                  onClick={() => {
+                    // Only allow manual toggle if market is open
+                    if (marketStatus?.isOpen) {
+                      setIsRealTimeMode(!isRealTimeMode);
+                    }
+                  }}
                   className="h-7 px-3 text-xs"
-                  title={isRealTimeMode ? "Disable real-time updates" : "Enable real-time updates"}
+                  title={marketStatus?.isOpen 
+                    ? (isRealTimeMode ? "Disable real-time updates" : "Enable real-time updates")
+                    : "Market is closed - real-time updates unavailable"
+                  }
+                  disabled={!marketStatus?.isOpen}
                 >
                   {isRealTimeMode ? "LIVE" : "PAUSED"}
                 </Button>
