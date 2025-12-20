@@ -293,6 +293,29 @@ export async function initializeClickHouse() {
       `,
     });
 
+    // Create technical_indicators table for storing RSI, MACD, and Volatility
+    await clickhouseClient.exec({
+      query: `
+        CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}.technical_indicators (
+          date Date,
+          symbol LowCardinality(String),
+          rsi Float64,
+          macd_value Float64,
+          macd_signal Float64,
+          macd_histogram Float64,
+          volatility Float64,
+          volatility_percent Float64,
+          data_points UInt32,
+          calculated_at DateTime DEFAULT now(),
+          INDEX symbol_bf symbol TYPE bloom_filter GRANULARITY 1,
+          INDEX date_idx date TYPE minmax GRANULARITY 3
+        ) ENGINE = ReplacingMergeTree(calculated_at)
+        PARTITION BY toYYYYMM(date)
+        ORDER BY (symbol, date)
+        TTL date + INTERVAL 1 YEAR
+      `,
+    });
+
     // Best-effort: apply optimizations to existing tables (safe to ignore failures)
     const tryExec = async (query: string) => {
       try {
@@ -1129,5 +1152,161 @@ export async function getLatestScriptExecution(scriptName: string): Promise<Scri
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error getting latest script execution for ${scriptName}:`, error);
     return null;
+  }
+}
+
+// Technical Indicators functions
+
+export interface TechnicalIndicatorData {
+  date: Date;
+  symbol: string;
+  rsi: number;
+  macdValue: number;
+  macdSignal: number;
+  macdHistogram: number;
+  volatility: number;
+  volatilityPercent: number;
+  dataPoints: number;
+}
+
+// Store technical indicators
+export async function storeTechnicalIndicators(indicators: TechnicalIndicatorData[]): Promise<void> {
+  try {
+    if (!indicators || indicators.length === 0) return;
+
+    const values = indicators.map((indicator) => ({
+      date: indicator.date,
+      symbol: indicator.symbol,
+      rsi: indicator.rsi,
+      macd_value: indicator.macdValue,
+      macd_signal: indicator.macdSignal,
+      macd_histogram: indicator.macdHistogram,
+      volatility: indicator.volatility,
+      volatility_percent: indicator.volatilityPercent,
+      data_points: indicator.dataPoints,
+    }));
+
+    await clickhouseClient.insert({
+      table: `${CLICKHOUSE_CONFIG.database}.technical_indicators`,
+      values,
+      format: 'JSONEachRow',
+    });
+
+    console.log(`[${new Date().toISOString()}] Stored ${indicators.length} technical indicator records`);
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error storing technical indicators:`, error);
+    // Don't throw - allow script to continue
+  }
+}
+
+// Get latest technical indicators for a symbol
+export async function getLatestTechnicalIndicators(symbol: string): Promise<TechnicalIndicatorData | null> {
+  try {
+    const result = await clickhouseClient.query({
+      query: `
+        SELECT 
+          date,
+          symbol,
+          rsi,
+          macd_value,
+          macd_signal,
+          macd_histogram,
+          volatility,
+          volatility_percent,
+          data_points
+        FROM ${CLICKHOUSE_CONFIG.database}.technical_indicators
+        WHERE symbol = {symbol:String}
+        ORDER BY date DESC
+        LIMIT 1
+      `,
+      query_params: { symbol },
+      format: 'JSONEachRow',
+    });
+
+    const data: any = await result.json();
+    if (data.length === 0) return null;
+
+    const row = data[0];
+    return {
+      date: new Date(row.date),
+      symbol: row.symbol,
+      rsi: Number(row.rsi),
+      macdValue: Number(row.macd_value),
+      macdSignal: Number(row.macd_signal),
+      macdHistogram: Number(row.macd_histogram),
+      volatility: Number(row.volatility),
+      volatilityPercent: Number(row.volatility_percent),
+      dataPoints: Number(row.data_points),
+    };
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error getting latest technical indicators for ${symbol}:`, error);
+    return null;
+  }
+}
+
+// Get technical indicators history for a symbol
+export async function getTechnicalIndicatorsHistory(
+  symbol: string,
+  days: number = 30
+): Promise<TechnicalIndicatorData[]> {
+  try {
+    const result = await clickhouseClient.query({
+      query: `
+        SELECT 
+          date,
+          symbol,
+          rsi,
+          macd_value,
+          macd_signal,
+          macd_histogram,
+          volatility,
+          volatility_percent,
+          data_points
+        FROM ${CLICKHOUSE_CONFIG.database}.technical_indicators
+        WHERE symbol = {symbol:String}
+        AND date >= today() - INTERVAL {days:UInt32} DAY
+        ORDER BY date DESC
+      `,
+      query_params: { symbol, days },
+      format: 'JSONEachRow',
+    });
+
+    const data: any = await result.json();
+    return data.map((row: any) => ({
+      date: new Date(row.date),
+      symbol: row.symbol,
+      rsi: Number(row.rsi),
+      macdValue: Number(row.macd_value),
+      macdSignal: Number(row.macd_signal),
+      macdHistogram: Number(row.macd_histogram),
+      volatility: Number(row.volatility),
+      volatilityPercent: Number(row.volatility_percent),
+      dataPoints: Number(row.data_points),
+    }));
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error getting technical indicators history for ${symbol}:`, error);
+    return [];
+  }
+}
+
+// Check if indicators are fresh for a symbol (within last day)
+export async function hasFreshIndicators(symbol: string, maxAgeHours: number = 24): Promise<boolean> {
+  try {
+    const result = await clickhouseClient.query({
+      query: `
+        SELECT count() as count
+        FROM ${CLICKHOUSE_CONFIG.database}.technical_indicators
+        WHERE symbol = {symbol:String}
+        AND date = today()
+        AND calculated_at >= now() - INTERVAL {hours:UInt32} HOUR
+      `,
+      query_params: { symbol, hours: maxAgeHours },
+      format: 'JSONEachRow',
+    });
+
+    const data: any = await result.json();
+    return data.length > 0 && data[0].count > 0;
+  } catch (error) {
+    return false;
   }
 }

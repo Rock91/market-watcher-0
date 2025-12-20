@@ -117,3 +117,35 @@ export const fetchAISignal = async (data: AISignalRequest): Promise<AISignalResp
   if (!response.ok) throw new Error('Failed to generate AI signal');
   return response.json();
 };
+
+// Technical Indicators
+export interface TechnicalIndicatorsResponse {
+  symbol: string;
+  indicators: {
+    rsi: {
+      value: number;
+      level: 'Oversold' | 'Neutral' | 'Overbought';
+      interpretation: string;
+    };
+    macd: {
+      value: number;
+      signal: number;
+      histogram: number;
+      interpretation: string;
+    };
+    volatility: {
+      value: number;
+      level: 'Low' | 'Medium' | 'High';
+      interpretation: string;
+    };
+  };
+  dataPoints: number;
+  lastUpdated: string;
+}
+
+export const fetchTechnicalIndicators = async (symbol: string, days: number = 30): Promise<TechnicalIndicatorsResponse> => {
+  const apiUrl = getApiBaseUrl();
+  const response = await fetch(`${apiUrl}/api/stocks/${symbol}/indicators?days=${days}`);
+  if (!response.ok) throw new Error('Failed to fetch technical indicators');
+  return response.json();
+};

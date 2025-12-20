@@ -2,7 +2,8 @@ import { Router } from 'express';
 import {
   getStockQuoteController,
   getHistoricalDataController,
-  getStockHistoryController
+  getStockHistoryController,
+  getTechnicalIndicatorsController
 } from '../controllers/stockController';
 
 const router = Router();
@@ -15,5 +16,8 @@ router.get('/:symbol/history', getHistoricalDataController);
 
 // Get historical stock quotes from ClickHouse
 router.get('/:symbol/history-clickhouse', getStockHistoryController);
+
+// Get technical indicators (RSI, MACD, Volatility)
+router.get('/:symbol/indicators', getTechnicalIndicatorsController);
 
 export default router;

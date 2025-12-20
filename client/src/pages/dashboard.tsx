@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { motion, AnimatePresence } from "framer-motion";
-import { fetchStockQuote, fetchHistoricalData, fetchMarketMovers, fetchTrendingSymbols, fetchAISignal, type StockQuote } from "@/lib/api";
+import { fetchStockQuote, fetchHistoricalData, fetchMarketMovers, fetchTrendingSymbols, fetchAISignal, fetchTechnicalIndicators, type StockQuote, type TechnicalIndicatorsResponse } from "@/lib/api";
 import { useWebSocket, type PriceUpdate, type MarketMover, type AISignal, type TrendingSymbol } from "@/hooks/use-websocket";
 
 // Mock Data Generators
@@ -126,6 +126,8 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [indicators, setIndicators] = useState<TechnicalIndicatorsResponse | null>(null);
+  const [indicatorsLoading, setIndicatorsLoading] = useState(false);
 
   // WebSocket connection for real-time updates with all event types
   const { 
@@ -441,7 +443,7 @@ export default function Dashboard() {
     }
   };
 
-  // Update chart when stock changes
+  // Update chart and indicators when stock changes
   useEffect(() => {
     const loadChartData = async () => {
       if (!selectedStock) return;
@@ -481,7 +483,26 @@ export default function Dashboard() {
       }
     };
 
+    const loadIndicators = async () => {
+      if (!selectedStock) return;
+
+      try {
+        setIndicatorsLoading(true);
+        console.log(`[Indicators] Fetching technical indicators for ${selectedStock.symbol}...`);
+        const indicatorsData = await fetchTechnicalIndicators(selectedStock.symbol, 30);
+        console.log(`[Indicators] Received indicators for ${selectedStock.symbol}:`, indicatorsData);
+        setIndicators(indicatorsData);
+      } catch (err) {
+        console.error('Error loading technical indicators:', err);
+        // Set to null on error - will show fallback values
+        setIndicators(null);
+      } finally {
+        setIndicatorsLoading(false);
+      }
+    };
+
     loadChartData();
+    loadIndicators();
   }, [selectedStock]);
 
   // Simulate Bot Activity with Advanced AI
@@ -838,9 +859,49 @@ export default function Dashboard() {
 
           {/* Quick Stats Grid */}
           <div className="grid grid-cols-3 gap-4 h-32">
-             <StatCard title="RSI (14)" value="68.4" status="neutral" />
-             <StatCard title="MACD" value="+0.45" status="positive" />
-             <StatCard title="VOLATILITY" value="High" status="warning" />
+            {indicatorsLoading ? (
+              <>
+                <StatCard title="RSI (14)" value="..." status="neutral" />
+                <StatCard title="MACD" value="..." status="neutral" />
+                <StatCard title="VOLATILITY" value="..." status="neutral" />
+              </>
+            ) : indicators ? (
+              <>
+                <StatCard 
+                  title="RSI (14)" 
+                  value={indicators.indicators.rsi.value.toFixed(1)} 
+                  status={
+                    indicators.indicators.rsi.level === 'Overbought' ? 'warning' :
+                    indicators.indicators.rsi.level === 'Oversold' ? 'positive' :
+                    'neutral'
+                  }
+                />
+                <StatCard 
+                  title="MACD" 
+                  value={`${indicators.indicators.macd.value >= 0 ? '+' : ''}${indicators.indicators.macd.value.toFixed(3)}`} 
+                  status={
+                    indicators.indicators.macd.histogram > 0 ? 'positive' :
+                    indicators.indicators.macd.histogram < 0 ? 'negative' :
+                    'neutral'
+                  }
+                />
+                <StatCard 
+                  title="VOLATILITY" 
+                  value={`${indicators.indicators.volatility.value.toFixed(1)}%`} 
+                  status={
+                    indicators.indicators.volatility.level === 'High' ? 'warning' :
+                    indicators.indicators.volatility.level === 'Low' ? 'positive' :
+                    'neutral'
+                  }
+                />
+              </>
+            ) : (
+              <>
+                <StatCard title="RSI (14)" value="N/A" status="neutral" />
+                <StatCard title="MACD" value="N/A" status="neutral" />
+                <StatCard title="VOLATILITY" value="N/A" status="neutral" />
+              </>
+            )}
           </div>
         </section>
 
