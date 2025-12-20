@@ -1014,24 +1014,6 @@ export default function Dashboard() {
                 >
                   +
                 </Button>
-                <Button
-                  variant={isRealTimeMode ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => {
-                    // Only allow manual toggle if market is open
-                    if (marketStatus?.isOpen) {
-                      setIsRealTimeMode(!isRealTimeMode);
-                    }
-                  }}
-                  className="h-7 px-3 text-xs"
-                  title={marketStatus?.isOpen 
-                    ? (isRealTimeMode ? "Disable real-time updates" : "Enable real-time updates")
-                    : "Market is closed - real-time updates unavailable"
-                  }
-                  disabled={!marketStatus?.isOpen}
-                >
-                  {isRealTimeMode ? "LIVE" : "PAUSED"}
-                </Button>
               </div>
               {selectedStock && (
                 <div className="flex flex-col items-end gap-1">
