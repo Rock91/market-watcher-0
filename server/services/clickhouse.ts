@@ -659,6 +659,54 @@ export async function getStockHistory(symbol: string, days: number = 30) {
   }
 }
 
+// Get stock history by hours (for intraday data)
+export async function getStockHistoryByHours(symbol: string, hours: number = 2, limit: number = 1000) {
+  try {
+    const tableName = getStockQuotesTableName(symbol);
+    
+    // Check if table exists, if not try the old shared table
+    let result;
+    try {
+      result = await clickhouseClient.query({
+        query: `
+          SELECT timestamp, price, change, change_percent, volume, market_cap, pe_ratio, day_high, day_low, previous_close, currency
+          FROM ${tableName}
+          WHERE timestamp >= now() - INTERVAL {hours:UInt32} HOUR
+          ORDER BY timestamp ASC
+          LIMIT {limit:UInt32}
+        `,
+        query_params: { hours, limit },
+        format: 'JSONEachRow',
+      });
+    } catch (error: any) {
+      // If per-stock table doesn't exist, try old shared table for backward compatibility
+      if (error?.message?.includes('does not exist') || error?.code === '60') {
+        result = await clickhouseClient.query({
+          query: `
+            SELECT timestamp, price, change, change_percent, volume, market_cap, pe_ratio, day_high, day_low, previous_close, currency
+            FROM ${CLICKHOUSE_CONFIG.database}.stock_quotes
+            WHERE symbol = {symbol:String}
+            AND timestamp >= now() - INTERVAL {hours:UInt32} HOUR
+            ORDER BY timestamp ASC
+            LIMIT {limit:UInt32}
+          `,
+          query_params: { symbol, hours, limit },
+          format: 'JSONEachRow',
+        });
+      } else {
+        throw error;
+      }
+    }
+
+    const data = await result.json();
+    // Add symbol to each record for compatibility
+    return data.map((row: any) => ({ ...row, symbol }));
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error querying stock history by hours for ${symbol}:`, error);
+    return [];
+  }
+}
+
 export async function getLatestMarketMovers(type: 'gainers' | 'losers', limit: number = 20) {
   try {
     const result = await clickhouseClient.query({

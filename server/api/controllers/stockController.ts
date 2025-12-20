@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { getStockQuote, getHistoricalData } from '../../services/yahooFinance';
 import { 
   getStockHistory, 
+  getStockHistoryByHours,
   getLatestStockQuote, 
   storeStockQuote,
   getHistoricalData as getDbHistoricalData,
@@ -165,7 +166,7 @@ export async function getStockHistoryController(req: Request, res: Response) {
 
     console.log(`[${new Date().toISOString()}] Fetching ClickHouse history for ${symbol}, last ${hours} hours, limit ${limit}`);
 
-    const history = await getStockHistory(symbol, parseInt(hours as string));
+    const history = await getStockHistoryByHours(symbol, parseInt(hours as string), parseInt(limit as string) || 1000);
 
       console.log(`[${new Date().toISOString()}] Retrieved ${history.length} historical records for ${symbol}`);
       res.json(history);

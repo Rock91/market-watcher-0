@@ -69,6 +69,34 @@ export const fetchHistoricalData = async (symbol: string, days: number = 30) => 
   }));
 };
 
+// Fetch intraday data by hours (for real-time chart)
+export const fetchIntradayData = async (symbol: string, hours: number = 2, limit: number = 1000) => {
+  const apiUrl = getApiBaseUrl();
+  const response = await fetch(
+    `${apiUrl}/api/stocks/${symbol}/history-clickhouse?hours=${hours}&limit=${limit}`
+  );
+  if (!response.ok) throw new Error('Failed to fetch intraday data');
+  const data = await response.json();
+
+  // Format data for chart - convert timestamp to time string
+  return data.map((item: any) => {
+    const timestamp = new Date(item.timestamp);
+    return {
+      time: timestamp.toLocaleTimeString('en-US', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false 
+      }),
+      price: item.price || 0,
+      date: item.timestamp,
+      timestamp: item.timestamp,
+      volume: item.volume || 0,
+      change: item.change || 0,
+      changePercent: item.change_percent || 0
+    };
+  });
+};
+
 // Fetch market movers
 export const fetchMarketMovers = async (type: 'gainers' | 'losers', count: number = 20): Promise<StockQuote[]> => {
   const apiUrl = getApiBaseUrl();

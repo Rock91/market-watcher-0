@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { motion, AnimatePresence } from "framer-motion";
-import { fetchStockQuote, fetchHistoricalData, fetchMarketMovers, fetchTrendingSymbols, fetchAISignal, fetchTechnicalIndicators, fetchMarketStatus, type StockQuote, type TechnicalIndicatorsResponse, type MarketStatus } from "@/lib/api";
+import { fetchStockQuote, fetchHistoricalData, fetchIntradayData, fetchMarketMovers, fetchTrendingSymbols, fetchAISignal, fetchTechnicalIndicators, fetchMarketStatus, type StockQuote, type TechnicalIndicatorsResponse, type MarketStatus } from "@/lib/api";
 import { useWebSocket, type PriceUpdate, type MarketMover, type AISignal, type TrendingSymbol } from "@/hooks/use-websocket";
 
 // Mock Data Generators
@@ -151,6 +151,8 @@ export default function Dashboard() {
   const [indicators, setIndicators] = useState<TechnicalIndicatorsResponse | null>(null);
   const [indicatorsLoading, setIndicatorsLoading] = useState(false);
   const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
+  const [chartHours, setChartHours] = useState(2); // Default: last 2 hours
+  const [isRealTimeMode, setIsRealTimeMode] = useState(true);
 
   // WebSocket connection for real-time updates with all event types
   const { 
@@ -161,12 +163,21 @@ export default function Dashboard() {
     aiSignals,
     latestAISignal,
     requestAISignal,
+    subscribe,
     error: wsError 
   } = useWebSocket({
     symbols: ['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'NVDA', 'AMZN', 'META', 'NFLX', 'GOOG'],
     events: ['price_update', 'market_movers_update', 'ai_signal', 'trending_update'],
     autoConnect: true
   });
+
+  // Subscribe to selected stock for real-time updates
+  useEffect(() => {
+    if (selectedStock && isConnected && subscribe && marketStatus?.isOpen) {
+      subscribe([selectedStock.symbol], ['price_update']);
+      console.log(`[Dashboard] Subscribed to real-time updates for ${selectedStock.symbol}`);
+    }
+  }, [selectedStock, isConnected, marketStatus?.isOpen, subscribe]);
 
   // Use ref to keep track of current balance inside interval closure
   const balanceRef = useRef(balance);
@@ -383,10 +394,41 @@ export default function Dashboard() {
             changePercent: changePercent,
             changeFormatted: changeFormatted
           } : null);
+          
+          // Update chart in real-time if market is open and in real-time mode
+          if (marketStatus?.isOpen && isRealTimeMode) {
+            setChartData(prev => {
+              const newData = [...prev];
+              const now = new Date();
+              const timeStr = now.toLocaleTimeString('en-US', { 
+                hour: '2-digit', 
+                minute: '2-digit',
+                hour12: false 
+              });
+              
+              // Add new data point
+              newData.push({
+                time: timeStr,
+                price: update.price,
+                date: now.toISOString(),
+                timestamp: update.timestamp,
+                volume: update.volume || 0,
+                change: change,
+                changePercent: changePercent
+              });
+              
+              // Keep only last 2 hours of data (or based on chartHours)
+              const cutoffTime = now.getTime() - (chartHours * 60 * 60 * 1000);
+              return newData.filter((d: any) => {
+                const dataTime = d.timestamp ? new Date(d.timestamp).getTime() : new Date(d.date).getTime();
+                return dataTime >= cutoffTime;
+              });
+            });
+          }
         }
       });
     }
-  }, [priceUpdates, selectedStock]);
+  }, [priceUpdates, selectedStock, marketStatus?.isOpen, isRealTimeMode, chartHours]);
 
   // Handle real-time AI signals from WebSocket
   useEffect(() => {
@@ -525,32 +567,41 @@ export default function Dashboard() {
       if (!selectedStock) return;
 
       try {
-        console.log(`[Chart] Fetching historical data for ${selectedStock.symbol}...`);
-        const historicalData = await fetchHistoricalData(selectedStock.symbol, 30); // 30 days of daily data
-        console.log(`[Chart] Received ${historicalData?.length || 0} data points for ${selectedStock.symbol}`, historicalData?.slice(0, 2));
-        if (historicalData && historicalData.length > 0) {
-          // Ensure all data points have date field for tooltip
-          const dataWithDates = historicalData.map((d: any) => ({
-            ...d,
-            date: d.date || d.time || new Date().toISOString()
-          }));
-          setChartData(dataWithDates);
+        console.log(`[Chart] Fetching intraday data for ${selectedStock.symbol}, last ${chartHours} hours...`);
+        
+        // Use intraday data for real-time view (last 2 hours by default)
+        const intradayData = await fetchIntradayData(selectedStock.symbol, chartHours, 1000);
+        console.log(`[Chart] Received ${intradayData?.length || 0} intraday data points for ${selectedStock.symbol}`);
+        
+        if (intradayData && intradayData.length > 0) {
+          setChartData(intradayData);
         } else {
-          // Fallback to generated data if no historical data
-          const generatedData = [];
-          let price = selectedStock.price;
-          const now = new Date();
-          for (let i = 0; i < 20; i++) {
-            price = price * (1 + (Math.random() * 0.04 - 0.02));
-            const date = new Date(now);
-            date.setDate(date.getDate() - (20 - i));
-            generatedData.push({
-              time: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-              price: price,
-              date: date.toISOString() // Add date for tooltip
-            });
+          // Fallback: try daily historical data if no intraday data
+          console.log(`[Chart] No intraday data, trying daily historical data...`);
+          const historicalData = await fetchHistoricalData(selectedStock.symbol, 30);
+          if (historicalData && historicalData.length > 0) {
+            const dataWithDates = historicalData.map((d: any) => ({
+              ...d,
+              date: d.date || d.time || new Date().toISOString()
+            }));
+            setChartData(dataWithDates);
+          } else {
+            // Final fallback: generated data
+            const generatedData = [];
+            let price = selectedStock.price;
+            const now = new Date();
+            for (let i = 0; i < 20; i++) {
+              price = price * (1 + (Math.random() * 0.04 - 0.02));
+              const date = new Date(now);
+              date.setDate(date.getDate() - (20 - i));
+              generatedData.push({
+                time: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                price: price,
+                date: date.toISOString()
+              });
+            }
+            setChartData(generatedData);
           }
-          setChartData(generatedData);
         }
       } catch (err) {
         console.error('Error loading chart data:', err);
@@ -588,7 +639,7 @@ export default function Dashboard() {
 
     loadChartData();
     loadIndicators();
-  }, [selectedStock]);
+  }, [selectedStock, chartHours]);
 
   // Simulate Bot Activity with Advanced AI
   useEffect(() => {
@@ -902,7 +953,7 @@ export default function Dashboard() {
           <Card className="flex-1 bg-black/40 border-white/10 backdrop-blur-sm relative overflow-hidden group">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-primary to-transparent opacity-50" />
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <div>
+              <div className="flex-1">
                 <CardTitle className="text-3xl font-orbitron tracking-wider text-white flex items-baseline gap-3">
                   {selectedStock?.symbol || 'Loading...'}
                   {selectedStock && (
@@ -914,6 +965,45 @@ export default function Dashboard() {
                 <p className="text-muted-foreground text-xs font-rajdhani uppercase tracking-widest mt-1">
                   {selectedStock?.name || 'Loading...'} // VOL: {selectedStock?.vol || 'N/A'}
                 </p>
+              </div>
+              {/* Chart Zoom Controls */}
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const newHours = Math.max(1, chartHours - 1);
+                    setChartHours(newHours);
+                  }}
+                  className="h-7 px-2 text-xs"
+                  disabled={chartHours <= 1}
+                >
+                  -
+                </Button>
+                <span className="text-xs text-muted-foreground min-w-[60px] text-center">
+                  {chartHours}h
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const newHours = Math.min(24, chartHours + 1);
+                    setChartHours(newHours);
+                  }}
+                  className="h-7 px-2 text-xs"
+                  disabled={chartHours >= 24}
+                >
+                  +
+                </Button>
+                <Button
+                  variant={isRealTimeMode ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setIsRealTimeMode(!isRealTimeMode)}
+                  className="h-7 px-3 text-xs"
+                  title={isRealTimeMode ? "Disable real-time updates" : "Enable real-time updates"}
+                >
+                  {isRealTimeMode ? "LIVE" : "PAUSED"}
+                </Button>
               </div>
               {selectedStock && (
                 <div className="flex flex-col items-end gap-1">
