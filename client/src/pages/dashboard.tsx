@@ -988,7 +988,7 @@ export default function Dashboard() {
               {/* Chart Zoom Controls and Stock Change - All on same line */}
               <div className="flex items-center gap-3 flex-shrink-0">
                 {/* Chart Zoom Controls */}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 border-r border-white/10 pr-3">
                   <Button
                     variant="outline"
                     size="sm"
@@ -1017,14 +1017,14 @@ export default function Dashboard() {
                     +
                   </Button>
                 </div>
-                {/* Stock Change Badge */}
+                {/* Stock Change Badge - Inline with zoom controls */}
                 {selectedStock && (
-                  <div className="flex flex-col items-end gap-1">
-                    <Badge variant="outline" className={`font-mono text-sm px-3 py-1 ${isPositiveChange(selectedStock.change) ? 'border-primary text-primary bg-primary/10' : 'border-destructive text-destructive bg-destructive/10'}`}>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className={`font-mono text-sm px-3 py-1 whitespace-nowrap ${isPositiveChange(selectedStock.change) ? 'border-primary text-primary bg-primary/10' : 'border-destructive text-destructive bg-destructive/10'}`}>
                       {selectedStock.changeFormatted || formatChangePercent(selectedStock.changePercent || 0)}
                     </Badge>
                     {selectedStock.change !== undefined && (
-                      <span className={`text-xs font-mono ${isPositiveChange(selectedStock.change) ? 'text-primary' : 'text-destructive'}`}>
+                      <span className={`text-xs font-mono whitespace-nowrap ${isPositiveChange(selectedStock.change) ? 'text-primary' : 'text-destructive'}`}>
                         {formatChangeAmount(selectedStock.change, selectedStock.currency)}
                       </span>
                     )}
