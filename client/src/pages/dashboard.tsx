@@ -113,6 +113,15 @@ interface Stock {
   changePercent?: number;
 }
 
+// Helper function to check if change is positive
+function isPositiveChange(change: string | number | undefined): boolean {
+  if (change === undefined) return false;
+  if (typeof change === 'string') {
+    return change.startsWith('+') || (change.startsWith('-') === false && parseFloat(change) > 0);
+  }
+  return change > 0;
+}
+
 export default function Dashboard() {
   const [logs, setLogs] = useState<PredictionLog[]>([]);
   const [selectedStock, setSelectedStock] = useState<StockQuote | null>(null);
