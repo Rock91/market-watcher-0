@@ -16,6 +16,114 @@ export const clickhouseClient = createClient({
   max_open_connections: 10,
 });
 
+// Cache for created per-stock tables to avoid repeated checks
+const createdTablesCache = new Set<string>();
+
+// Sanitize symbol name for use in table name (ClickHouse table names must be valid identifiers)
+function sanitizeTableName(symbol: string): string {
+  // Replace invalid characters with underscore, ensure it starts with a letter or number
+  const sanitized = symbol.replace(/[^a-zA-Z0-9_]/g, '_').toUpperCase();
+  // Ensure it starts with a letter (prepend 'T' if it starts with a number)
+  return /^[0-9]/.test(sanitized) ? `T${sanitized}` : sanitized;
+}
+
+// Get table name for stock quotes
+function getStockQuotesTableName(symbol: string): string {
+  return `${CLICKHOUSE_CONFIG.database}.${sanitizeTableName(symbol)}_quotes`;
+}
+
+// Get table name for historical data
+function getHistoricalDataTableName(symbol: string): string {
+  return `${CLICKHOUSE_CONFIG.database}.${sanitizeTableName(symbol)}_historical`;
+}
+
+// Create per-stock quotes table if it doesn't exist
+async function ensureStockQuotesTable(symbol: string): Promise<void> {
+  const tableName = getStockQuotesTableName(symbol);
+  const cacheKey = `quotes_${symbol}`;
+  
+  if (createdTablesCache.has(cacheKey)) {
+    return; // Already created in this session
+  }
+
+  try {
+    await clickhouseClient.exec({
+      query: `
+        CREATE TABLE IF NOT EXISTS ${tableName} (
+          timestamp DateTime,
+          price Float64,
+          change Float64,
+          change_percent Float64,
+          volume UInt64,
+          market_cap UInt64,
+          pe_ratio Float64,
+          day_high Float64,
+          day_low Float64,
+          previous_close Float64,
+          currency LowCardinality(String),
+          INDEX timestamp_idx timestamp TYPE minmax GRANULARITY 3,
+          INDEX price_idx price TYPE minmax GRANULARITY 3,
+          INDEX volume_idx volume TYPE minmax GRANULARITY 3
+        ) ENGINE = MergeTree()
+        PARTITION BY toYYYYMM(timestamp)
+        ORDER BY timestamp
+        TTL timestamp + INTERVAL 1 YEAR
+      `,
+    });
+    createdTablesCache.add(cacheKey);
+  } catch (error: any) {
+    // If table already exists, add to cache anyway
+    if (error?.message?.includes('already exists') || error?.code === '57') {
+      createdTablesCache.add(cacheKey);
+    } else {
+      throw error;
+    }
+  }
+}
+
+// Create per-stock historical data table if it doesn't exist
+async function ensureHistoricalDataTable(symbol: string): Promise<void> {
+  const tableName = getHistoricalDataTableName(symbol);
+  const cacheKey = `historical_${symbol}`;
+  
+  if (createdTablesCache.has(cacheKey)) {
+    return; // Already created in this session
+  }
+
+  try {
+    await clickhouseClient.exec({
+      query: `
+        CREATE TABLE IF NOT EXISTS ${tableName} (
+          date Date,
+          open Float64,
+          high Float64,
+          low Float64,
+          close Float64,
+          volume UInt64,
+          adj_close Float64,
+          fetched_at DateTime DEFAULT now(),
+          INDEX date_idx date TYPE minmax GRANULARITY 3,
+          INDEX close_idx close TYPE minmax GRANULARITY 3,
+          INDEX volume_idx volume TYPE minmax GRANULARITY 3,
+          INDEX high_idx high TYPE minmax GRANULARITY 3,
+          INDEX low_idx low TYPE minmax GRANULARITY 3
+        ) ENGINE = ReplacingMergeTree(fetched_at)
+        PARTITION BY toYYYYMM(date)
+        ORDER BY date
+        TTL date + INTERVAL 2 YEAR
+      `,
+    });
+    createdTablesCache.add(cacheKey);
+  } catch (error: any) {
+    // If table already exists, add to cache anyway
+    if (error?.message?.includes('already exists') || error?.code === '57') {
+      createdTablesCache.add(cacheKey);
+    } else {
+      throw error;
+    }
+  }
+}
+
 // Initialize database and tables
 export async function initializeClickHouse() {
   try {
@@ -244,28 +352,47 @@ export async function initializeClickHouse() {
 }
 
 // Store multiple stock quotes in a single ClickHouse insert (much faster than per-row inserts)
+// Now stores each stock in its own table
 export async function storeStockQuotes(quotes: any[], timestamp: Date = new Date()) {
   try {
     if (!quotes || quotes.length === 0) return;
 
-    await clickhouseClient.insert({
-      table: `${CLICKHOUSE_CONFIG.database}.stock_quotes`,
-      values: quotes.map((quote: any) => ({
-        timestamp,
-        symbol: quote.symbol,
-        price: quote.price || 0,
-        change: quote.change || 0,
-        change_percent: quote.changePercent || 0,
-        volume: quote.volume || 0,
-        market_cap: quote.marketCap || 0,
-        pe_ratio: quote.peRatio || 0,
-        day_high: quote.dayHigh || 0,
-        day_low: quote.dayLow || 0,
-        previous_close: quote.previousClose || 0,
-        currency: quote.currency || 'USD',
-      })),
-      format: 'JSONEachRow',
-    });
+    // Group quotes by symbol to insert into per-stock tables
+    const quotesBySymbol = new Map<string, any[]>();
+    for (const quote of quotes) {
+      const symbol = quote.symbol;
+      if (!symbol) continue;
+      
+      if (!quotesBySymbol.has(symbol)) {
+        quotesBySymbol.set(symbol, []);
+      }
+      quotesBySymbol.get(symbol)!.push(quote);
+    }
+
+    // Insert into each stock's table
+    const symbols = Array.from(quotesBySymbol.keys());
+    for (const symbol of symbols) {
+      const symbolQuotes = quotesBySymbol.get(symbol)!;
+      await ensureStockQuotesTable(symbol);
+      
+      await clickhouseClient.insert({
+        table: getStockQuotesTableName(symbol),
+        values: symbolQuotes.map((quote: any) => ({
+          timestamp,
+          price: quote.price || 0,
+          change: quote.change || 0,
+          change_percent: quote.changePercent || 0,
+          volume: quote.volume || 0,
+          market_cap: quote.marketCap || 0,
+          pe_ratio: quote.peRatio || 0,
+          day_high: quote.dayHigh || 0,
+          day_low: quote.dayLow || 0,
+          previous_close: quote.previousClose || 0,
+          currency: quote.currency || 'USD',
+        })),
+        format: 'JSONEachRow',
+      });
+    }
   } catch (error) {
     // Silently fail if ClickHouse is not available
     return;
@@ -359,21 +486,46 @@ export async function getTrackedSymbols(days: number = 7, limit: number = 1000):
 }
 
 // Query functions for retrieving stored data
+// Now reads from per-stock tables
 export async function getStockHistory(symbol: string, days: number = 30) {
   try {
-    const result = await clickhouseClient.query({
-      query: `
-        SELECT *
-        FROM ${CLICKHOUSE_CONFIG.database}.stock_quotes
-        WHERE symbol = {symbol:String}
-        AND timestamp >= now() - INTERVAL {days:UInt32} DAY
-        ORDER BY timestamp DESC
-      `,
-      query_params: { symbol, days },
-      format: 'JSONEachRow',
-    });
+    const tableName = getStockQuotesTableName(symbol);
+    
+    // Check if table exists, if not try the old shared table
+    let result;
+    try {
+      result = await clickhouseClient.query({
+        query: `
+          SELECT timestamp, price, change, change_percent, volume, market_cap, pe_ratio, day_high, day_low, previous_close, currency
+          FROM ${tableName}
+          WHERE timestamp >= now() - INTERVAL {days:UInt32} DAY
+          ORDER BY timestamp DESC
+        `,
+        query_params: { days },
+        format: 'JSONEachRow',
+      });
+    } catch (error: any) {
+      // If per-stock table doesn't exist, try old shared table for backward compatibility
+      if (error?.message?.includes('does not exist') || error?.code === '60') {
+        result = await clickhouseClient.query({
+          query: `
+            SELECT timestamp, price, change, change_percent, volume, market_cap, pe_ratio, day_high, day_low, previous_close, currency
+            FROM ${CLICKHOUSE_CONFIG.database}.stock_quotes
+            WHERE symbol = {symbol:String}
+            AND timestamp >= now() - INTERVAL {days:UInt32} DAY
+            ORDER BY timestamp DESC
+          `,
+          query_params: { symbol, days },
+          format: 'JSONEachRow',
+        });
+      } else {
+        throw error;
+      }
+    }
 
-    return result.json();
+    const data = await result.json();
+    // Add symbol to each record for compatibility
+    return data.map((row: any) => ({ ...row, symbol }));
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error querying stock history for ${symbol}:`, error);
     return [];
@@ -431,13 +583,15 @@ export async function getMarketMoversHistory(type: 'gainers' | 'losers', limit: 
 }
 
 // Store historical OHLCV data
+// Now stores each stock in its own table
 export async function storeHistoricalData(symbol: string, data: any[]) {
   try {
     if (!data || data.length === 0) return;
 
+    await ensureHistoricalDataTable(symbol);
+
     const values = data.map((item: any) => ({
       date: new Date(item.date),
-      symbol,
       open: item.open || 0,
       high: item.high || 0,
       low: item.low || 0,
@@ -447,7 +601,7 @@ export async function storeHistoricalData(symbol: string, data: any[]) {
     }));
 
     await clickhouseClient.insert({
-      table: `${CLICKHOUSE_CONFIG.database}.historical_data`,
+      table: getHistoricalDataTableName(symbol),
       values,
       format: 'JSONEachRow',
     });
@@ -460,19 +614,42 @@ export async function storeHistoricalData(symbol: string, data: any[]) {
 }
 
 // Get historical data for a symbol
+// Now reads from per-stock tables
 export async function getHistoricalData(symbol: string, days: number = 30) {
   try {
-    const result = await clickhouseClient.query({
-      query: `
-        SELECT date, open, high, low, close, volume, adj_close
-        FROM ${CLICKHOUSE_CONFIG.database}.historical_data
-        WHERE symbol = {symbol:String}
-        AND date >= today() - INTERVAL {days:UInt32} DAY
-        ORDER BY date ASC
-      `,
-      query_params: { symbol, days },
-      format: 'JSONEachRow',
-    });
+    const tableName = getHistoricalDataTableName(symbol);
+    
+    // Check if table exists, if not try the old shared table
+    let result;
+    try {
+      result = await clickhouseClient.query({
+        query: `
+          SELECT date, open, high, low, close, volume, adj_close
+          FROM ${tableName}
+          WHERE date >= today() - INTERVAL {days:UInt32} DAY
+          ORDER BY date ASC
+        `,
+        query_params: { days },
+        format: 'JSONEachRow',
+      });
+    } catch (error: any) {
+      // If per-stock table doesn't exist, try old shared table for backward compatibility
+      if (error?.message?.includes('does not exist') || error?.code === '60') {
+        result = await clickhouseClient.query({
+          query: `
+            SELECT date, open, high, low, close, volume, adj_close
+            FROM ${CLICKHOUSE_CONFIG.database}.historical_data
+            WHERE symbol = {symbol:String}
+            AND date >= today() - INTERVAL {days:UInt32} DAY
+            ORDER BY date ASC
+          `,
+          query_params: { symbol, days },
+          format: 'JSONEachRow',
+        });
+      } else {
+        throw error;
+      }
+    }
 
     return result.json();
   } catch (error) {
@@ -536,22 +713,47 @@ export async function getLatestTrendingSymbols(limit: number = 20) {
 }
 
 // Get latest stock quote from database
+// Now reads from per-stock tables
 export async function getLatestStockQuote(symbol: string) {
   try {
-    const result = await clickhouseClient.query({
-      query: `
-        SELECT *
-        FROM ${CLICKHOUSE_CONFIG.database}.stock_quotes
-        WHERE symbol = {symbol:String}
-        ORDER BY timestamp DESC
-        LIMIT 1
-      `,
-      query_params: { symbol },
-      format: 'JSONEachRow',
-    });
+    const tableName = getStockQuotesTableName(symbol);
+    
+    // Check if table exists, if not try the old shared table
+    let result;
+    try {
+      result = await clickhouseClient.query({
+        query: `
+          SELECT timestamp, price, change, change_percent, volume, market_cap, pe_ratio, day_high, day_low, previous_close, currency
+          FROM ${tableName}
+          ORDER BY timestamp DESC
+          LIMIT 1
+        `,
+        format: 'JSONEachRow',
+      });
+    } catch (error: any) {
+      // If per-stock table doesn't exist, try old shared table for backward compatibility
+      if (error?.message?.includes('does not exist') || error?.code === '60') {
+        result = await clickhouseClient.query({
+          query: `
+            SELECT timestamp, price, change, change_percent, volume, market_cap, pe_ratio, day_high, day_low, previous_close, currency
+            FROM ${CLICKHOUSE_CONFIG.database}.stock_quotes
+            WHERE symbol = {symbol:String}
+            ORDER BY timestamp DESC
+            LIMIT 1
+          `,
+          query_params: { symbol },
+          format: 'JSONEachRow',
+        });
+      } else {
+        throw error;
+      }
+    }
 
     const data: any = await result.json();
-    return data.length > 0 ? data[0] : null;
+    if (data.length > 0) {
+      return { ...data[0], symbol }; // Add symbol for compatibility
+    }
+    return null;
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error querying stock quote for ${symbol}:`, error);
     return null;
@@ -579,20 +781,43 @@ export async function isDataFresh(table: string, minutes: number = 5): Promise<b
 }
 
 // Get the date range of existing historical data for a symbol
+// Now reads from per-stock tables
 export async function getHistoricalDataRange(symbol: string): Promise<{ minDate: Date | null; maxDate: Date | null; count: number }> {
   try {
-    const result = await clickhouseClient.query({
-      query: `
-        SELECT 
-          min(date) as min_date,
-          max(date) as max_date,
-          count() as count
-        FROM ${CLICKHOUSE_CONFIG.database}.historical_data
-        WHERE symbol = {symbol:String}
-      `,
-      query_params: { symbol },
-      format: 'JSONEachRow',
-    });
+    const tableName = getHistoricalDataTableName(symbol);
+    
+    // Check if table exists, if not try the old shared table
+    let result;
+    try {
+      result = await clickhouseClient.query({
+        query: `
+          SELECT 
+            min(date) as min_date,
+            max(date) as max_date,
+            count() as count
+          FROM ${tableName}
+        `,
+        format: 'JSONEachRow',
+      });
+    } catch (error: any) {
+      // If per-stock table doesn't exist, try old shared table for backward compatibility
+      if (error?.message?.includes('does not exist') || error?.code === '60') {
+        result = await clickhouseClient.query({
+          query: `
+            SELECT 
+              min(date) as min_date,
+              max(date) as max_date,
+              count() as count
+            FROM ${CLICKHOUSE_CONFIG.database}.historical_data
+            WHERE symbol = {symbol:String}
+          `,
+          query_params: { symbol },
+          format: 'JSONEachRow',
+        });
+      } else {
+        throw error;
+      }
+    }
 
     const data: any = await result.json();
     if (data.length > 0 && data[0].count > 0) {
@@ -632,44 +857,88 @@ export async function getAllTrackedSymbols(): Promise<string[]> {
 }
 
 // Get symbols that need historical data backfill
+// Updated to check per-stock tables
 export async function getSymbolsNeedingBackfill(targetDays: number = 365): Promise<string[]> {
   try {
-    // Use tracked_symbols as source-of-truth for "what shares should we keep history for"
-    const result = await clickhouseClient.query({
+    // Get tracked symbols
+    const trackedResult = await clickhouseClient.query({
       query: `
-        WITH tracked AS (
-          SELECT symbol
-          FROM ${CLICKHOUSE_CONFIG.database}.tracked_symbols
-          WHERE last_seen >= now() - INTERVAL 7 DAY
-          GROUP BY symbol
-        ),
-        historical_coverage AS (
-          SELECT 
-            symbol,
-            min(date) as min_date,
-            max(date) as max_date,
-            count() as record_count
-          FROM ${CLICKHOUSE_CONFIG.database}.historical_data
-          WHERE symbol IN (SELECT symbol FROM tracked)
-          GROUP BY symbol
-        )
-        SELECT t.symbol
-        FROM tracked t
-        LEFT JOIN historical_coverage hc ON t.symbol = hc.symbol
-        WHERE hc.record_count IS NULL 
-           OR hc.record_count < {minRecords:UInt32}
-           OR hc.min_date > today() - INTERVAL {targetDays:UInt32} DAY
-        ORDER BY t.symbol
+        SELECT symbol
+        FROM ${CLICKHOUSE_CONFIG.database}.tracked_symbols
+        WHERE last_seen >= now() - INTERVAL 7 DAY
+        GROUP BY symbol
+        ORDER BY symbol
       `,
-      query_params: { 
-        targetDays, 
-        minRecords: Math.floor(targetDays * 0.7) // At least 70% of expected trading days
-      },
       format: 'JSONEachRow',
     });
+    
+    const trackedData: any = await trackedResult.json();
+    const trackedSymbols = trackedData.map((row: any) => row.symbol);
+    
+    if (trackedSymbols.length === 0) {
+      return [];
+    }
 
-    const data: any = await result.json();
-    return data.map((row: any) => row.symbol);
+    // Check each symbol's per-stock table or fall back to shared table
+    const symbolsNeedingBackfill: string[] = [];
+    const minRecords = Math.floor(targetDays * 0.7);
+    
+    for (const symbol of trackedSymbols) {
+      try {
+        const tableName = getHistoricalDataTableName(symbol);
+        let result;
+        
+        try {
+          // Try per-stock table first
+          result = await clickhouseClient.query({
+            query: `
+              SELECT 
+                min(date) as min_date,
+                max(date) as max_date,
+                count() as record_count
+              FROM ${tableName}
+            `,
+            format: 'JSONEachRow',
+          });
+        } catch (error: any) {
+          // If per-stock table doesn't exist, try old shared table
+          if (error?.message?.includes('does not exist') || error?.code === '60') {
+            result = await clickhouseClient.query({
+              query: `
+                SELECT 
+                  min(date) as min_date,
+                  max(date) as max_date,
+                  count() as record_count
+                FROM ${CLICKHOUSE_CONFIG.database}.historical_data
+                WHERE symbol = {symbol:String}
+              `,
+              query_params: { symbol },
+              format: 'JSONEachRow',
+            });
+          } else {
+            throw error;
+          }
+        }
+        
+        const data: any = await result.json();
+        const recordCount = data.length > 0 ? Number(data[0].record_count || 0) : 0;
+        const minDate = data.length > 0 && data[0].min_date ? new Date(data[0].min_date) : null;
+        
+        const needsBackfill = 
+          recordCount === 0 ||
+          recordCount < minRecords ||
+          (minDate && minDate > new Date(Date.now() - targetDays * 24 * 60 * 60 * 1000));
+        
+        if (needsBackfill) {
+          symbolsNeedingBackfill.push(symbol);
+        }
+      } catch (error) {
+        // If we can't check, assume it needs backfill
+        symbolsNeedingBackfill.push(symbol);
+      }
+    }
+    
+    return symbolsNeedingBackfill;
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error getting symbols needing backfill:`, error);
     return [];
@@ -727,6 +996,28 @@ export async function logScriptEnd(
     const completedAt = new Date();
     const durationMs = completedAt.getTime() - startedAt.getTime();
 
+    // Sanitize metadata to ensure all values are JSON-serializable
+    let metadataString: string | null = null;
+    if (metadata) {
+      try {
+        // Convert any Date objects or other non-serializable values to strings
+        const sanitizedMetadata: Record<string, any> = {};
+        for (const [key, value] of Object.entries(metadata)) {
+          if (value instanceof Date) {
+            sanitizedMetadata[key] = value.toISOString();
+          } else if (value === undefined) {
+            sanitizedMetadata[key] = null;
+          } else {
+            sanitizedMetadata[key] = value;
+          }
+        }
+        metadataString = JSON.stringify(sanitizedMetadata);
+      } catch (err) {
+        // If metadata can't be stringified, use a simple string representation
+        metadataString = JSON.stringify({ error: 'Failed to serialize metadata' });
+      }
+    }
+
     // Insert completion record - ReplacingMergeTree will replace the 'running' record
     await clickhouseClient.insert({
       table: `${CLICKHOUSE_CONFIG.database}.script_execution_log`,
@@ -738,7 +1029,7 @@ export async function logScriptEnd(
         duration_ms: durationMs,
         rows_affected: rowsAffected || null,
         error_message: errorMessage || null,
-        metadata: metadata ? JSON.stringify(metadata) : null,
+        metadata: metadataString,
       }],
       format: 'JSONEachRow',
     });

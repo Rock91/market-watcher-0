@@ -107,9 +107,10 @@ interface Stock {
   symbol: string;
   name: string;
   price: number;
-  change: string;
+  change: string | number;
   vol: string;
   currency?: string;
+  changePercent?: number;
 }
 
 export default function Dashboard() {
@@ -995,7 +996,16 @@ function StockCard({ stock, isSelected, onClick, type }: { stock: Stock, isSelec
     if (type === 'loser') return 'text-destructive';
     if (type === 'trending') {
       // For trending, use color based on change value
-      return stock.change.startsWith('+') ? 'text-primary' : stock.change.startsWith('-') ? 'text-destructive' : 'text-secondary';
+      // Handle both string and number types
+      if (typeof stock.change === 'string') {
+        return stock.change.startsWith('+') ? 'text-primary' : stock.change.startsWith('-') ? 'text-destructive' : 'text-secondary';
+      } else if (typeof stock.change === 'number') {
+        return stock.change > 0 ? 'text-primary' : stock.change < 0 ? 'text-destructive' : 'text-secondary';
+      } else if (stock.changePercent !== undefined) {
+        // Fallback to changePercent if change is not available
+        return stock.changePercent > 0 ? 'text-primary' : stock.changePercent < 0 ? 'text-destructive' : 'text-secondary';
+      }
+      return 'text-secondary';
     }
     return 'text-white';
   };
@@ -1018,7 +1028,16 @@ function StockCard({ stock, isSelected, onClick, type }: { stock: Stock, isSelec
         </div>
         <div className="text-right">
           <p className={`text-sm font-bold font-mono ${getChangeColor()}`}>
-            {stock.change}
+            {(() => {
+              if (typeof stock.change === 'string') {
+                return stock.change;
+              } else if (typeof stock.change === 'number') {
+                return `${stock.change >= 0 ? '+' : ''}${stock.change.toFixed(2)}%`;
+              } else if (stock.changePercent !== undefined) {
+                return `${stock.changePercent >= 0 ? '+' : ''}${stock.changePercent.toFixed(2)}%`;
+              }
+              return 'N/A';
+            })()}
           </p>
           <p className="text-[10px] text-muted-foreground">
             {stock.currency ? `${stock.currency} ` : '$'}{typeof stock.price === 'number' ? stock.price.toFixed(2) : stock.price}
