@@ -275,8 +275,11 @@ export async function runOnce(): Promise<void> {
   log('One-time calculation complete');
 }
 
-// Run as standalone script
-if (require.main === module) {
+// Run as standalone script (only when executed directly, not when imported)
+const isMainModule = import.meta.url === `file://${process.argv[1]}` || 
+                      process.argv[1]?.includes('technicalIndicatorsSync.ts');
+
+if (isMainModule) {
   const args = process.argv.slice(2);
 
   if (args.includes('--once')) {

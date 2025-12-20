@@ -28,7 +28,9 @@ import {
   getHistoricalDataRange,
   getAllTrackedSymbols,
   getSymbolsNeedingBackfill,
+  clickhouseClient,
 } from '../services/clickhouse';
+import { CLICKHOUSE_CONFIG } from '../config/database';
 
 // Configuration
 const CONFIG = {
@@ -76,9 +78,11 @@ async function fetchAllMarketMovers(): Promise<string[]> {
     const gainers = await getMarketMovers('gainers', 50);
     if (gainers.length > 0) {
       await storeMarketMovers('gainers', gainers);
-      await storeTrackedSymbolsFromMovers('gainers', gainers);
+      await storeTrackedSymbolsFromMovers('gainers', gainers, 'market_movers');
       gainers.forEach(g => allSymbols.push(g.symbol));
-      log(`Stored ${gainers.length} gainers`);
+      log(`✓ Stored ${gainers.length} gainers in market_movers and tracked_symbols`);
+    } else {
+      log('No gainers found');
     }
     
     await sleep(CONFIG.API_DELAY_MS);
@@ -87,16 +91,20 @@ async function fetchAllMarketMovers(): Promise<string[]> {
     const losers = await getMarketMovers('losers', 50);
     if (losers.length > 0) {
       await storeMarketMovers('losers', losers);
-      await storeTrackedSymbolsFromMovers('losers', losers);
+      await storeTrackedSymbolsFromMovers('losers', losers, 'market_movers');
       losers.forEach(l => allSymbols.push(l.symbol));
-      log(`Stored ${losers.length} losers`);
+      log(`✓ Stored ${losers.length} losers in market_movers and tracked_symbols`);
+    } else {
+      log('No losers found');
     }
   } catch (error: any) {
     console.error(`[${new Date().toISOString()}] [MarketSync] Error fetching market movers:`, error.message);
   }
   
   // Remove duplicates
-  return Array.from(new Set(allSymbols));
+  const uniqueSymbols = Array.from(new Set(allSymbols));
+  log(`Total unique symbols from market movers: ${uniqueSymbols.length}`);
+  return uniqueSymbols;
 }
 
 /**
@@ -290,6 +298,41 @@ export async function startMarketDataSync(): Promise<void> {
   - Market movers: every ${CONFIG.MOVERS_INTERVAL_MS / 1000}s
   - Historical backfill: every ${CONFIG.HISTORICAL_CHECK_INTERVAL_MS / 1000}s
   - Backfill target: ${CONFIG.BACKFILL_DAYS} days`);
+
+  // Log current tracked symbols count and details
+  try {
+    const trackedSymbols = await getAllTrackedSymbols();
+    log(`Currently tracking ${trackedSymbols.length} symbols`);
+    
+    // Get detailed info about tracked symbols
+    const result = await clickhouseClient.query({
+      query: `
+        SELECT 
+          symbol,
+          anyLast(name) as name,
+          max(last_seen) as last_seen,
+          anyLast(last_type) as last_type,
+          anyLast(last_source) as last_source
+        FROM ${CLICKHOUSE_CONFIG.database}.tracked_symbols FINAL
+        WHERE last_seen >= now() - INTERVAL 7 DAY
+        GROUP BY symbol
+        ORDER BY last_seen DESC
+        LIMIT 10
+      `,
+      format: 'JSONEachRow',
+    });
+    const recentSymbols: any = await result.json();
+    if (recentSymbols.length > 0) {
+      log(`Recent tracked symbols (last 10):`);
+      recentSymbols.forEach((s: any) => {
+        log(`  - ${s.symbol} (${s.name}): ${s.last_type} from ${s.last_source}, last seen: ${new Date(s.last_seen).toISOString()}`);
+      });
+    } else {
+      log('No tracked symbols found in the last 7 days');
+    }
+  } catch (error: any) {
+    log(`Could not get tracked symbols info: ${error.message}`);
+  }
 }
 
 /**
@@ -310,8 +353,12 @@ export async function runOnce(): Promise<void> {
   log('One-time sync complete');
 }
 
-// Run as standalone script
-if (require.main === module) {
+// Run as standalone script (only when executed directly, not when imported)
+// Check if this file is being run directly by checking if it matches the script path
+const isMainModule = import.meta.url === `file://${process.argv[1]}` || 
+                      process.argv[1]?.includes('marketDataSync.ts');
+
+if (isMainModule) {
   const args = process.argv.slice(2);
   
   if (args.includes('--once')) {

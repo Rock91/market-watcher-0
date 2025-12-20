@@ -14,6 +14,8 @@ import { serveStatic } from "./static";
 import { initializeClickHouse } from './services/clickhouse';
 import { log } from './utils/helpers';
 import { startDataFetcher } from './jobs/dataFetcher';
+import { startMarketDataSync } from './scripts/marketDataSync';
+import { startIndicatorsSync } from './scripts/technicalIndicatorsSync';
 
 const app = express();
 const httpServer = createServer(app);
@@ -92,11 +94,47 @@ app.use(express.urlencoded({ extended: false }));
       // Start background data fetcher after ClickHouse is ready
       startDataFetcher();
       log(`[${new Date().toISOString()}] Background data fetcher started`);
+      
+      // Start market data sync service
+      startMarketDataSync()
+        .then(() => {
+          log(`[${new Date().toISOString()}] Market data sync service started`);
+        })
+        .catch((error) => {
+          console.warn(`[${new Date().toISOString()}] Market data sync failed to start:`, error.message);
+        });
+      
+      // Start technical indicators sync service
+      startIndicatorsSync()
+        .then(() => {
+          log(`[${new Date().toISOString()}] Technical indicators sync service started`);
+        })
+        .catch((error) => {
+          console.warn(`[${new Date().toISOString()}] Technical indicators sync failed to start:`, error.message);
+        });
     })
     .catch((error) => {
       console.warn(`[${new Date().toISOString()}] ClickHouse initialization failed (server will continue without database):`, error.message);
       // Still start the data fetcher - it will gracefully handle DB unavailability
       startDataFetcher();
+      
+      // Try to start market data sync even if ClickHouse init failed
+      startMarketDataSync()
+        .then(() => {
+          log(`[${new Date().toISOString()}] Market data sync service started`);
+        })
+        .catch((syncError) => {
+          console.warn(`[${new Date().toISOString()}] Market data sync failed to start:`, syncError.message);
+        });
+      
+      // Try to start technical indicators sync even if ClickHouse init failed
+      startIndicatorsSync()
+        .then(() => {
+          log(`[${new Date().toISOString()}] Technical indicators sync service started`);
+        })
+        .catch((syncError) => {
+          console.warn(`[${new Date().toISOString()}] Technical indicators sync failed to start:`, syncError.message);
+        });
     });
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
@@ -115,6 +153,8 @@ app.use(express.urlencoded({ extended: false }));
       log(`[${new Date().toISOString()}] Broadcasting: prices(5s), movers(30s), AI signals(15s), trending(60s)`);
       log(`[${new Date().toISOString()}] Yahoo Finance API integration active`);
       log(`[${new Date().toISOString()}] Background data fetcher active - data cached in ClickHouse`);
+      log(`[${new Date().toISOString()}] Market data sync active - movers(60s), historical backfill(10min)`);
+      log(`[${new Date().toISOString()}] Technical indicators sync active - RSI/MACD/Volatility (1hr)`);
     },
   );
 })();

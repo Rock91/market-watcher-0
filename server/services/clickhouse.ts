@@ -316,6 +316,94 @@ export async function initializeClickHouse() {
       `,
     });
 
+    // Create AI strategy results table (stores all strategy runs on all stocks)
+    await clickhouseClient.exec({
+      query: `
+        CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}.ai_strategy_results (
+          timestamp DateTime,
+          symbol LowCardinality(String),
+          strategy LowCardinality(String),
+          action LowCardinality(String),
+          confidence Float64,
+          reason String,
+          price Float64,
+          rsi Nullable(Float64),
+          macd Nullable(Float64),
+          bb_upper Nullable(Float64),
+          bb_middle Nullable(Float64),
+          bb_lower Nullable(Float64),
+          sma20 Nullable(Float64),
+          sma50 Nullable(Float64),
+          ema12 Nullable(Float64),
+          ema26 Nullable(Float64),
+          INDEX symbol_bf symbol TYPE bloom_filter GRANULARITY 1,
+          INDEX strategy_idx strategy TYPE bloom_filter GRANULARITY 1,
+          INDEX confidence_idx confidence TYPE minmax GRANULARITY 3,
+          INDEX timestamp_idx timestamp TYPE minmax GRANULARITY 3
+        ) ENGINE = MergeTree()
+        PARTITION BY toYYYYMM(timestamp)
+        ORDER BY (symbol, timestamp, strategy)
+        TTL timestamp + INTERVAL 30 DAY
+      `,
+    });
+
+    // Create AI signals table (high confidence signals > 75%)
+    await clickhouseClient.exec({
+      query: `
+        CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}.ai_signals (
+          signal_id String,
+          timestamp DateTime,
+          symbol LowCardinality(String),
+          strategy LowCardinality(String),
+          action LowCardinality(String),
+          confidence Float64,
+          reason String,
+          price Float64,
+          status LowCardinality(String),
+          executed_at Nullable(DateTime),
+          trade_id Nullable(String),
+          updated_at DateTime DEFAULT now(),
+          INDEX symbol_bf symbol TYPE bloom_filter GRANULARITY 1,
+          INDEX status_idx status TYPE bloom_filter GRANULARITY 1,
+          INDEX confidence_idx confidence TYPE minmax GRANULARITY 3
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        PARTITION BY toYYYYMM(timestamp)
+        ORDER BY (symbol, timestamp)
+        TTL timestamp + INTERVAL 90 DAY
+      `,
+    });
+
+    // Create trade history table
+    await clickhouseClient.exec({
+      query: `
+        CREATE TABLE IF NOT EXISTS ${CLICKHOUSE_CONFIG.database}.trade_history (
+          trade_id String,
+          signal_id String,
+          timestamp DateTime,
+          symbol LowCardinality(String),
+          action LowCardinality(String),
+          strategy LowCardinality(String),
+          entry_price Float64,
+          quantity UInt32,
+          investment_amount Float64,
+          confidence Float64,
+          exit_price Nullable(Float64),
+          exit_timestamp Nullable(DateTime),
+          profit_loss Nullable(Float64),
+          profit_loss_percent Nullable(Float64),
+          status LowCardinality(String),
+          reason String,
+          updated_at DateTime DEFAULT now(),
+          INDEX symbol_bf symbol TYPE bloom_filter GRANULARITY 1,
+          INDEX status_idx status TYPE bloom_filter GRANULARITY 1,
+          INDEX timestamp_idx timestamp TYPE minmax GRANULARITY 3
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        PARTITION BY toYYYYMM(timestamp)
+        ORDER BY (symbol, timestamp)
+        TTL timestamp + INTERVAL 1 YEAR
+      `,
+    });
+
     // Best-effort: apply optimizations to existing tables (safe to ignore failures)
     const tryExec = async (query: string) => {
       try {
@@ -462,7 +550,10 @@ export async function storeTrackedSymbolsFromMovers(
   source: string = 'market_movers',
 ) {
   try {
-    if (!movers || movers.length === 0) return;
+    if (!movers || movers.length === 0) {
+      console.log(`[${new Date().toISOString()}] No movers to track for ${type}`);
+      return;
+    }
     const lastSeen = new Date();
     const values = movers.map((mover, index) => ({
       symbol: mover.symbol,
@@ -478,9 +569,11 @@ export async function storeTrackedSymbolsFromMovers(
       values,
       format: 'JSONEachRow',
     });
-  } catch (error) {
-    // Silently fail if ClickHouse is not available
-    return;
+
+    console.log(`[${new Date().toISOString()}] Stored ${values.length} tracked symbols from ${type} (source: ${source})`);
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] Error storing tracked symbols from ${type}:`, error.message);
+    // Don't throw - allow script to continue
   }
 }
 
@@ -492,7 +585,7 @@ export async function getTrackedSymbols(days: number = 7, limit: number = 1000):
         SELECT
           symbol,
           anyLast(name) AS name
-        FROM ${CLICKHOUSE_CONFIG.database}.tracked_symbols
+        FROM ${CLICKHOUSE_CONFIG.database}.tracked_symbols FINAL
         WHERE last_seen >= now() - INTERVAL {days:UInt32} DAY
         GROUP BY symbol
         ORDER BY symbol
@@ -863,7 +956,7 @@ export async function getAllTrackedSymbols(): Promise<string[]> {
     const result = await clickhouseClient.query({
       query: `
         SELECT symbol
-        FROM ${CLICKHOUSE_CONFIG.database}.tracked_symbols
+        FROM ${CLICKHOUSE_CONFIG.database}.tracked_symbols FINAL
         WHERE last_seen >= now() - INTERVAL 7 DAY
         GROUP BY symbol
         ORDER BY symbol
@@ -1308,5 +1401,267 @@ export async function hasFreshIndicators(symbol: string, maxAgeHours: number = 2
     return data.length > 0 && data[0].count > 0;
   } catch (error) {
     return false;
+  }
+}
+
+// AI Strategy and Trading Functions
+
+export interface AIStrategyResult {
+  timestamp: Date;
+  symbol: string;
+  strategy: string;
+  action: 'BUY' | 'SELL' | 'HOLD';
+  confidence: number;
+  reason: string;
+  price: number;
+  technicalIndicators?: {
+    rsi?: number;
+    macd?: number;
+    bollingerBands?: { upper: number; middle: number; lower: number };
+    movingAverages?: { sma20: number; sma50: number; ema12: number; ema26: number };
+  };
+}
+
+export interface AISignal {
+  signalId: string;
+  timestamp: Date;
+  symbol: string;
+  strategy: string;
+  action: 'BUY' | 'SELL';
+  confidence: number;
+  reason: string;
+  price: number;
+  status: 'pending' | 'executed' | 'cancelled';
+  executedAt?: Date;
+  tradeId?: string;
+}
+
+export interface Trade {
+  tradeId: string;
+  signalId: string;
+  timestamp: Date;
+  symbol: string;
+  action: 'BUY' | 'SELL';
+  strategy: string;
+  entryPrice: number;
+  quantity: number;
+  investmentAmount: number;
+  confidence: number;
+  exitPrice?: number;
+  exitTimestamp?: Date;
+  profitLoss?: number;
+  profitLossPercent?: number;
+  status: 'open' | 'closed' | 'cancelled';
+  reason: string;
+}
+
+// Store AI strategy result
+export async function storeAIStrategyResult(result: AIStrategyResult): Promise<void> {
+  try {
+    const indicators = result.technicalIndicators || {};
+    const bb = indicators.bollingerBands;
+    const ma = indicators.movingAverages;
+
+    await clickhouseClient.insert({
+      table: `${CLICKHOUSE_CONFIG.database}.ai_strategy_results`,
+      values: [{
+        timestamp: result.timestamp,
+        symbol: result.symbol,
+        strategy: result.strategy,
+        action: result.action,
+        confidence: result.confidence,
+        reason: result.reason,
+        price: result.price,
+        rsi: indicators.rsi || null,
+        macd: indicators.macd || null,
+        bb_upper: bb?.upper || null,
+        bb_middle: bb?.middle || null,
+        bb_lower: bb?.lower || null,
+        sma20: ma?.sma20 || null,
+        sma50: ma?.sma50 || null,
+        ema12: ma?.ema12 || null,
+        ema26: ma?.ema26 || null,
+      }],
+      format: 'JSONEachRow',
+    });
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error storing AI strategy result:`, error);
+  }
+}
+
+// Store AI signal (high confidence > 75%)
+export async function storeAISignal(signal: AISignal): Promise<void> {
+  try {
+    await clickhouseClient.insert({
+      table: `${CLICKHOUSE_CONFIG.database}.ai_signals`,
+      values: [{
+        signal_id: signal.signalId,
+        timestamp: signal.timestamp,
+        symbol: signal.symbol,
+        strategy: signal.strategy,
+        action: signal.action,
+        confidence: signal.confidence,
+        reason: signal.reason,
+        price: signal.price,
+        status: signal.status,
+        executed_at: signal.executedAt || null,
+        trade_id: signal.tradeId || null,
+        updated_at: signal.executedAt || signal.timestamp, // Use executed_at if available, otherwise timestamp
+      }],
+      format: 'JSONEachRow',
+    });
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error storing AI signal:`, error);
+  }
+}
+
+// Store trade history
+export async function storeTrade(trade: Trade): Promise<void> {
+  try {
+    await clickhouseClient.insert({
+      table: `${CLICKHOUSE_CONFIG.database}.trade_history`,
+      values: [{
+        trade_id: trade.tradeId,
+        signal_id: trade.signalId,
+        timestamp: trade.timestamp,
+        symbol: trade.symbol,
+        action: trade.action,
+        strategy: trade.strategy,
+        entry_price: trade.entryPrice,
+        quantity: trade.quantity,
+        investment_amount: trade.investmentAmount,
+        confidence: trade.confidence,
+        exit_price: trade.exitPrice || null,
+        exit_timestamp: trade.exitTimestamp || null,
+        profit_loss: trade.profitLoss || null,
+        profit_loss_percent: trade.profitLossPercent || null,
+        status: trade.status,
+        reason: trade.reason,
+        updated_at: trade.exitTimestamp || trade.timestamp, // Use exit_timestamp if available, otherwise timestamp
+      }],
+      format: 'JSONEachRow',
+    });
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error storing trade:`, error);
+  }
+}
+
+// Get pending AI signals
+export async function getPendingAISignals(limit: number = 100): Promise<AISignal[]> {
+  try {
+    const result = await clickhouseClient.query({
+      query: `
+        SELECT 
+          signal_id,
+          timestamp,
+          symbol,
+          strategy,
+          action,
+          confidence,
+          reason,
+          price,
+          status,
+          executed_at,
+          trade_id
+        FROM ${CLICKHOUSE_CONFIG.database}.ai_signals
+        WHERE status = 'pending'
+        ORDER BY confidence DESC, timestamp DESC
+        LIMIT {limit:UInt32}
+      `,
+      query_params: { limit },
+      format: 'JSONEachRow',
+    });
+
+    const data: any = await result.json();
+    return data.map((row: any) => ({
+      signalId: row.signal_id,
+      timestamp: new Date(row.timestamp),
+      symbol: row.symbol,
+      strategy: row.strategy,
+      action: row.action,
+      confidence: Number(row.confidence),
+      reason: row.reason,
+      price: Number(row.price),
+      status: row.status,
+      executedAt: row.executed_at ? new Date(row.executed_at) : undefined,
+      tradeId: row.trade_id || undefined,
+    }));
+  } catch (error: any) {
+    // If table doesn't exist, return empty array (tables will be created on server restart)
+    if (error?.code === '60' || error?.message?.includes('does not exist') || error?.type === 'UNKNOWN_TABLE') {
+      console.warn(`[${new Date().toISOString()}] AI signals table does not exist yet. Tables will be created on server restart.`);
+      return [];
+    }
+    console.error(`[${new Date().toISOString()}] Error getting pending AI signals:`, error);
+    return [];
+  }
+}
+
+// Get open trades
+export async function getOpenTrades(symbol?: string): Promise<Trade[]> {
+  try {
+    let query = `
+      SELECT 
+        trade_id,
+        signal_id,
+        timestamp,
+        symbol,
+        action,
+        strategy,
+        entry_price,
+        quantity,
+        investment_amount,
+        confidence,
+        exit_price,
+        exit_timestamp,
+        profit_loss,
+        profit_loss_percent,
+        status,
+        reason
+      FROM ${CLICKHOUSE_CONFIG.database}.trade_history
+      WHERE status = 'open'
+    `;
+    
+    const queryParams: any = {};
+    if (symbol) {
+      query += ` AND symbol = {symbol:String}`;
+      queryParams.symbol = symbol;
+    }
+    
+    query += ` ORDER BY timestamp DESC`;
+
+    const result = await clickhouseClient.query({
+      query,
+      query_params: queryParams,
+      format: 'JSONEachRow',
+    });
+
+    const data: any = await result.json();
+    return data.map((row: any) => ({
+      tradeId: row.trade_id,
+      signalId: row.signal_id,
+      timestamp: new Date(row.timestamp),
+      symbol: row.symbol,
+      action: row.action,
+      strategy: row.strategy,
+      entryPrice: Number(row.entry_price),
+      quantity: Number(row.quantity),
+      investmentAmount: Number(row.investment_amount),
+      confidence: Number(row.confidence),
+      exitPrice: row.exit_price ? Number(row.exit_price) : undefined,
+      exitTimestamp: row.exit_timestamp ? new Date(row.exit_timestamp) : undefined,
+      profitLoss: row.profit_loss ? Number(row.profit_loss) : undefined,
+      profitLossPercent: row.profit_loss_percent ? Number(row.profit_loss_percent) : undefined,
+      status: row.status,
+      reason: row.reason,
+    }));
+  } catch (error: any) {
+    // If table doesn't exist, return empty array (tables will be created on server restart)
+    if (error?.code === '60' || error?.message?.includes('does not exist') || error?.type === 'UNKNOWN_TABLE') {
+      console.warn(`[${new Date().toISOString()}] Trade history table does not exist yet. Tables will be created on server restart.`);
+      return [];
+    }
+    console.error(`[${new Date().toISOString()}] Error getting open trades:`, error);
+    return [];
   }
 }
