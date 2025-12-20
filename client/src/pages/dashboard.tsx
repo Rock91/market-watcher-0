@@ -606,7 +606,15 @@ export default function Dashboard() {
     }
   };
 
-  // Update chart and indicators when stock changes or hours change (only if not manually set or stock changed)
+  // Reset manual hours flag when stock changes (allow auto-adjust for new stock)
+  useEffect(() => {
+    if (selectedStock) {
+      setUserManuallySetHours(false);
+      console.log(`[Chart] Stock changed to ${selectedStock.symbol}, resetting manual zoom flag`);
+    }
+  }, [selectedStock?.symbol]);
+
+  // Update chart and indicators when stock changes
   useEffect(() => {
     const loadChartData = async () => {
       if (!selectedStock) return;
