@@ -971,8 +971,8 @@ export default function Dashboard() {
           {/* Main Chart Card */}
           <Card className="flex-1 bg-black/40 border-white/10 backdrop-blur-sm relative overflow-hidden group">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-primary to-transparent opacity-50" />
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <div className="flex-1">
+            <CardHeader className="flex flex-row items-center justify-between pb-2 gap-4">
+              <div className="flex-1 min-w-0">
                 <CardTitle className="text-3xl font-orbitron tracking-wider text-white flex items-baseline gap-3">
                   {selectedStock?.symbol || 'Loading...'}
                   {selectedStock && (
@@ -985,48 +985,52 @@ export default function Dashboard() {
                   {selectedStock?.name || 'Loading...'} // VOL: {selectedStock?.vol || 'N/A'}
                 </p>
               </div>
-              {/* Chart Zoom Controls */}
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const newHours = Math.max(1, chartHours - 1);
-                    setChartHours(newHours);
-                  }}
-                  className="h-7 px-2 text-xs"
-                  disabled={chartHours <= 1}
-                >
-                  -
-                </Button>
-                <span className="text-xs text-muted-foreground min-w-[60px] text-center">
-                  {chartHours}h
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const newHours = Math.min(24, chartHours + 1);
-                    setChartHours(newHours);
-                  }}
-                  className="h-7 px-2 text-xs"
-                  disabled={chartHours >= 24}
-                >
-                  +
-                </Button>
-              </div>
-              {selectedStock && (
-                <div className="flex flex-col items-end gap-1">
-                  <Badge variant="outline" className={`font-mono text-sm px-3 py-1 ${isPositiveChange(selectedStock.change) ? 'border-primary text-primary bg-primary/10' : 'border-destructive text-destructive bg-destructive/10'}`}>
-                    {selectedStock.changeFormatted || formatChangePercent(selectedStock.changePercent || 0)}
-                  </Badge>
-                  {selectedStock.change !== undefined && (
-                    <span className={`text-xs font-mono ${isPositiveChange(selectedStock.change) ? 'text-primary' : 'text-destructive'}`}>
-                      {formatChangeAmount(selectedStock.change, selectedStock.currency)}
-                    </span>
-                  )}
+              {/* Chart Zoom Controls and Stock Change - All on same line */}
+              <div className="flex items-center gap-3 flex-shrink-0">
+                {/* Chart Zoom Controls */}
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const newHours = Math.max(1, chartHours - 1);
+                      setChartHours(newHours);
+                    }}
+                    className="h-7 px-2 text-xs"
+                    disabled={chartHours <= 1}
+                  >
+                    -
+                  </Button>
+                  <span className="text-xs text-muted-foreground min-w-[60px] text-center">
+                    {chartHours}h
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const newHours = Math.min(24, chartHours + 1);
+                      setChartHours(newHours);
+                    }}
+                    className="h-7 px-2 text-xs"
+                    disabled={chartHours >= 24}
+                  >
+                    +
+                  </Button>
                 </div>
-              )}
+                {/* Stock Change Badge */}
+                {selectedStock && (
+                  <div className="flex flex-col items-end gap-1">
+                    <Badge variant="outline" className={`font-mono text-sm px-3 py-1 ${isPositiveChange(selectedStock.change) ? 'border-primary text-primary bg-primary/10' : 'border-destructive text-destructive bg-destructive/10'}`}>
+                      {selectedStock.changeFormatted || formatChangePercent(selectedStock.changePercent || 0)}
+                    </Badge>
+                    {selectedStock.change !== undefined && (
+                      <span className={`text-xs font-mono ${isPositiveChange(selectedStock.change) ? 'text-primary' : 'text-destructive'}`}>
+                        {formatChangeAmount(selectedStock.change, selectedStock.currency)}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
             </CardHeader>
             <CardContent className="h-[calc(100%-80px)] w-full">
               <ResponsiveContainer width="100%" height="100%">
