@@ -121,6 +121,7 @@ export default function Dashboard() {
   const [aiStrategy, setAiStrategy] = useState("neuro-scalp");
   const [topGainers, setTopGainers] = useState<StockQuote[]>([]);
   const [topLosers, setTopLosers] = useState<StockQuote[]>([]);
+  const [trendingStocks, setTrendingStocks] = useState<StockQuote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -265,7 +266,29 @@ export default function Dashboard() {
   useEffect(() => {
     if (trendingSymbols && trendingSymbols.length > 0) {
       console.log('[WebSocket] Trending symbols update:', trendingSymbols.length, 'symbols');
-      // You can use trending symbols to highlight or show a separate section
+      // Convert trending symbols to StockQuote format
+      const convertTrendingToStockQuotes = async () => {
+        const quotes = await Promise.all(
+          trendingSymbols.map(async (trending: TrendingSymbol) => {
+            try {
+              const quote = await fetchStockQuote(trending.symbol);
+              return quote;
+            } catch (err) {
+              // Fallback if quote fetch fails
+              return {
+                symbol: trending.symbol,
+                name: trending.name || trending.symbol,
+                price: 0,
+                change: '+0.00%',
+                vol: '0',
+                currency: 'USD'
+              } as StockQuote;
+            }
+          })
+        );
+        setTrendingStocks(quotes.filter(q => q !== null) as StockQuote[]);
+      };
+      convertTrendingToStockQuotes();
     }
   }, [trendingSymbols]);
 
@@ -387,6 +410,21 @@ export default function Dashboard() {
 
       setTopGainers(gainers);
       setTopLosers(losers);
+      
+      // Convert trending symbols to StockQuote format
+      if (trending && trending.symbols && trending.symbols.length > 0) {
+        const trendingQuotes = await Promise.all(
+          trending.symbols.map(async (symbol: string) => {
+            try {
+              const quote = await fetchStockQuote(symbol);
+              return quote;
+            } catch (err) {
+              return null;
+            }
+          })
+        );
+        setTrendingStocks(trendingQuotes.filter(q => q !== null) as StockQuote[]);
+      }
 
       console.log('[Dashboard] Market data refreshed:', {
         gainers: gainers.length,
@@ -448,10 +486,12 @@ export default function Dashboard() {
   // Simulate Bot Activity with Advanced AI
   useEffect(() => {
     const interval = setInterval(async () => {
-      if (topGainers.length === 0 && topLosers.length === 0) return;
+      if (topGainers.length === 0 && topLosers.length === 0 && trendingStocks.length === 0) return;
 
-      const stockPool = Math.random() > 0.5 ? topGainers : topLosers;
-      const randomStock = stockPool[Math.floor(Math.random() * stockPool.length)];
+      // Randomly select from gainers, losers, or trending stocks
+      const pools = [topGainers, topLosers, trendingStocks].filter(pool => pool.length > 0);
+      const selectedPool = pools[Math.floor(Math.random() * pools.length)];
+      const randomStock = selectedPool[Math.floor(Math.random() * selectedPool.length)];
 
       try {
         // Get real market data for AI analysis
@@ -573,7 +613,7 @@ export default function Dashboard() {
     }, 3000); // New prediction every 3 seconds
 
     return () => clearInterval(interval);
-  }, [topGainers, topLosers]);
+  }, [topGainers, topLosers, trendingStocks]);
 
   // Simulate live chart movement (only if using generated data)
   useEffect(() => {
@@ -659,9 +699,10 @@ export default function Dashboard() {
         {/* Left Sidebar - Watchlists */}
         <aside className="col-span-3 flex flex-col gap-4 h-[calc(100vh-7rem)] overflow-hidden">
           <Tabs defaultValue="gainers" className="w-full flex-1 flex flex-col min-h-0">
-            <TabsList className="w-full grid grid-cols-2 bg-black/20 border border-white/10 rounded-none flex-shrink-0">
-              <TabsTrigger value="gainers" className="rounded-none data-[state=active]:bg-primary/20 data-[state=active]:text-primary font-orbitron text-xs">TOP GAINERS</TabsTrigger>
-              <TabsTrigger value="losers" className="rounded-none data-[state=active]:bg-destructive/20 data-[state=active]:text-destructive font-orbitron text-xs">TOP LOSERS</TabsTrigger>
+            <TabsList className="w-full grid grid-cols-3 bg-black/20 border border-white/10 rounded-none flex-shrink-0">
+              <TabsTrigger value="gainers" className="rounded-none data-[state=active]:bg-primary/20 data-[state=active]:text-primary font-orbitron text-xs">GAINERS</TabsTrigger>
+              <TabsTrigger value="losers" className="rounded-none data-[state=active]:bg-destructive/20 data-[state=active]:text-destructive font-orbitron text-xs">LOSERS</TabsTrigger>
+              <TabsTrigger value="trending" className="rounded-none data-[state=active]:bg-secondary/20 data-[state=active]:text-secondary font-orbitron text-xs">TRENDING</TabsTrigger>
             </TabsList>
 
             {/* Refresh Button */}
@@ -712,6 +753,25 @@ export default function Dashboard() {
                         isSelected={selectedStock?.symbol === stock.symbol}
                         onClick={() => setSelectedStock(stock)}
                         type="loser"
+                      />
+                    ))
+                  )}
+                </div>
+              </TabsContent>
+              <TabsContent value="trending" className="absolute inset-0 mt-0 data-[state=inactive]:hidden">
+                <div className="h-full overflow-y-auto pr-2 custom-scrollbar space-y-2">
+                  {loading ? (
+                    <div className="text-center text-muted-foreground py-4">Loading trending data...</div>
+                  ) : trendingStocks.length === 0 ? (
+                    <div className="text-center text-muted-foreground py-4">No trending data available</div>
+                  ) : (
+                    trendingStocks.map((stock) => (
+                      <StockCard 
+                        key={stock.symbol} 
+                        stock={stock} 
+                        isSelected={selectedStock?.symbol === stock.symbol}
+                        onClick={() => setSelectedStock(stock)}
+                        type="trending"
                       />
                     ))
                   )}
@@ -920,14 +980,33 @@ export default function Dashboard() {
   );
 }
 
-function StockCard({ stock, isSelected, onClick, type }: { stock: Stock, isSelected: boolean, onClick: () => void, type: 'gainer' | 'loser' }) {
+function StockCard({ stock, isSelected, onClick, type }: { stock: Stock, isSelected: boolean, onClick: () => void, type: 'gainer' | 'loser' | 'trending' }) {
+  const getBorderColor = () => {
+    if (isSelected) {
+      if (type === 'gainer') return 'border-l-primary';
+      if (type === 'loser') return 'border-l-destructive';
+      if (type === 'trending') return 'border-l-secondary';
+    }
+    return 'border-l-transparent';
+  };
+
+  const getChangeColor = () => {
+    if (type === 'gainer') return 'text-primary';
+    if (type === 'loser') return 'text-destructive';
+    if (type === 'trending') {
+      // For trending, use color based on change value
+      return stock.change.startsWith('+') ? 'text-primary' : stock.change.startsWith('-') ? 'text-destructive' : 'text-secondary';
+    }
+    return 'text-white';
+  };
+
   return (
     <div 
       onClick={onClick}
       className={`
         p-3 rounded cursor-pointer transition-all duration-200 border-l-2
         ${isSelected 
-          ? 'bg-white/10 border-l-primary' 
+          ? `bg-white/10 ${getBorderColor()}` 
           : 'bg-black/20 border-l-transparent hover:bg-white/5'
         }
       `}
@@ -938,7 +1017,7 @@ function StockCard({ stock, isSelected, onClick, type }: { stock: Stock, isSelec
           <p className="text-[10px] text-muted-foreground truncate max-w-[100px]">{stock.name}</p>
         </div>
         <div className="text-right">
-          <p className={`text-sm font-bold font-mono ${type === 'gainer' ? 'text-primary' : 'text-destructive'}`}>
+          <p className={`text-sm font-bold font-mono ${getChangeColor()}`}>
             {stock.change}
           </p>
           <p className="text-[10px] text-muted-foreground">
