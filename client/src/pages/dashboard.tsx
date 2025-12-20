@@ -117,7 +117,7 @@ interface Stock {
 function isPositiveChange(change: string | number | undefined): boolean {
   if (change === undefined) return false;
   if (typeof change === 'string') {
-    return change.startsWith('+') || (change.startsWith('-') === false && parseFloat(change) > 0);
+    return change.startsWith('+') || (!change.startsWith('-') && parseFloat(change) > 0);
   }
   return change > 0;
 }
@@ -854,7 +854,7 @@ export default function Dashboard() {
                 <CardTitle className="text-3xl font-orbitron tracking-wider text-white flex items-baseline gap-3">
                   {selectedStock?.symbol || 'Loading...'}
                   {selectedStock && (
-                    <span className={`text-lg font-rajdhani ${selectedStock.change.startsWith('+') ? 'text-primary' : 'text-destructive'}`}>
+                    <span className={`text-lg font-rajdhani ${isPositiveChange(selectedStock.change) ? 'text-primary' : 'text-destructive'}`}>
                       {selectedStock.currency ? `${selectedStock.currency} ` : '$'}{selectedStock.price.toFixed(2)}
                     </span>
                   )}
@@ -864,7 +864,7 @@ export default function Dashboard() {
                 </p>
               </div>
               {selectedStock && (
-                <Badge variant="outline" className={`font-mono text-lg px-4 py-1 ${selectedStock.change.startsWith('+') ? 'border-primary text-primary bg-primary/10' : 'border-destructive text-destructive bg-destructive/10'}`}>
+                <Badge variant="outline" className={`font-mono text-lg px-4 py-1 ${isPositiveChange(selectedStock.change) ? 'border-primary text-primary bg-primary/10' : 'border-destructive text-destructive bg-destructive/10'}`}>
                   {selectedStock.change}
                 </Badge>
               )}
@@ -874,8 +874,8 @@ export default function Dashboard() {
                 <AreaChart data={chartData}>
                   <defs>
                     <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={selectedStock?.change.startsWith('+') ? "var(--color-primary)" : "var(--color-destructive)"} stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor={selectedStock?.change.startsWith('+') ? "var(--color-primary)" : "var(--color-destructive)"} stopOpacity={0}/>
+                      <stop offset="5%" stopColor={selectedStock && isPositiveChange(selectedStock.change) ? "var(--color-primary)" : "var(--color-destructive)"} stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor={selectedStock && isPositiveChange(selectedStock.change) ? "var(--color-primary)" : "var(--color-destructive)"} stopOpacity={0}/>
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
@@ -888,7 +888,7 @@ export default function Dashboard() {
                   <Area 
                     type="monotone" 
                     dataKey="price" 
-                    stroke={selectedStock?.change.startsWith('+') ? "var(--color-primary)" : "var(--color-destructive)"} 
+                    stroke={selectedStock && isPositiveChange(selectedStock.change) ? "var(--color-primary)" : "var(--color-destructive)"} 
                     strokeWidth={2}
                     fillOpacity={1} 
                     fill="url(#colorPrice)" 

@@ -2,8 +2,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import yahooFinance from 'yahoo-finance2';
 import { storage } from "./storage";
-import { generateAISignal, type MarketData } from "../services/ai-strategies";
-import { getStockHistory, getLatestMarketMovers } from "../services/clickhouse";
+import { generateAISignal, type MarketData } from "./services/ai-strategies";
+import { getStockHistory, getLatestMarketMovers } from "./services/clickhouse";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -83,7 +83,7 @@ export async function registerRoutes(
     } catch (error) {
       console.error('Error fetching historical data:', error);
       // Fallback to generated data
-      const fallbackData = [];
+      const fallbackData: Array<{ time: string; price: number; open: number; high: number; low: number; volume: number }> = [];
       let price = 100; // Base price
       for (let i = 0; i < 20; i++) {
         price = price * (1 + (Math.random() * 0.04 - 0.02));
