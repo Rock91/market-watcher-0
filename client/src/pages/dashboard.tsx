@@ -153,6 +153,9 @@ export default function Dashboard() {
   const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
   const [chartHours, setChartHours] = useState(2); // Default: last 2 hours (or 24 if market closed)
   const [isRealTimeMode, setIsRealTimeMode] = useState(true); // Default: LIVE mode
+  const [userManuallySetHours, setUserManuallySetHours] = useState(false); // Track if user manually changed hours
+  const lastUpdateTimeRef = useRef<number>(0); // Track last chart update time to throttle
+  const updateThrottleMs = 30000; // Update chart every 30 seconds (not every price update)
 
   // WebSocket connection for real-time updates with all event types
   const { 
@@ -396,34 +399,54 @@ export default function Dashboard() {
           } : null);
           
           // Update chart in real-time if market is open and in real-time mode
+          // Throttle updates to avoid too frequent chart redraws
           if (marketStatus?.isOpen && isRealTimeMode) {
-            setChartData(prev => {
-              const newData = [...prev];
-              const now = new Date();
-              const timeStr = now.toLocaleTimeString('en-US', { 
-                hour: '2-digit', 
-                minute: '2-digit',
-                hour12: false 
-              });
+            const now = Date.now();
+            if (now - lastUpdateTimeRef.current >= updateThrottleMs) {
+              lastUpdateTimeRef.current = now;
               
-              // Add new data point
-              newData.push({
-                time: timeStr,
-                price: update.price,
-                date: now.toISOString(),
-                timestamp: update.timestamp,
-                volume: update.volume || 0,
-                change: change,
-                changePercent: changePercent
+              setChartData(prev => {
+                const newData = [...prev];
+                const dateNow = new Date();
+                
+                // Format time based on chart hours - show seconds for short periods, minutes for longer
+                let timeStr: string;
+                if (chartHours <= 1) {
+                  // For 1 hour or less, show seconds
+                  timeStr = dateNow.toLocaleTimeString('en-US', { 
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: false 
+                  });
+                } else {
+                  // For longer periods, show minutes
+                  timeStr = dateNow.toLocaleTimeString('en-US', { 
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    hour12: false 
+                  });
+                }
+                
+                // Add new data point
+                newData.push({
+                  time: timeStr,
+                  price: update.price,
+                  date: dateNow.toISOString(),
+                  timestamp: update.timestamp || dateNow.getTime(),
+                  volume: update.volume || 0,
+                  change: change,
+                  changePercent: changePercent
+                });
+                
+                // Keep only data within the selected time range
+                const cutoffTime = dateNow.getTime() - (chartHours * 60 * 60 * 1000);
+                return newData.filter((d: any) => {
+                  const dataTime = d.timestamp ? new Date(d.timestamp).getTime() : new Date(d.date).getTime();
+                  return dataTime >= cutoffTime;
+                });
               });
-              
-              // Keep only last 2 hours of data (or based on chartHours)
-              const cutoffTime = now.getTime() - (chartHours * 60 * 60 * 1000);
-              return newData.filter((d: any) => {
-                const dataTime = d.timestamp ? new Date(d.timestamp).getTime() : new Date(d.date).getTime();
-                return dataTime >= cutoffTime;
-              });
-            });
+            }
           }
         }
       });
@@ -487,21 +510,24 @@ export default function Dashboard() {
         setMarketStatus(status);
         
         // Auto-adjust chart hours and real-time mode based on market status
-        if (status.isOpen) {
-          // Market is open: use 2 hours and enable real-time
-          if (chartHours !== 2) {
-            setChartHours(2);
-          }
-          if (!isRealTimeMode) {
-            setIsRealTimeMode(true);
-          }
-        } else {
-          // Market is closed: use 24 hours and disable real-time
-          if (chartHours !== 24) {
-            setChartHours(24);
-          }
-          if (isRealTimeMode) {
-            setIsRealTimeMode(false);
+        // Only auto-adjust on initial load or if user hasn't manually changed it
+        if (!userManuallySetHours) {
+          if (status.isOpen) {
+            // Market is open: use 2 hours and enable real-time
+            if (chartHours !== 2) {
+              setChartHours(2);
+            }
+            if (!isRealTimeMode) {
+              setIsRealTimeMode(true);
+            }
+          } else {
+            // Market is closed: use 24 hours and disable real-time
+            if (chartHours !== 24) {
+              setChartHours(24);
+            }
+            if (isRealTimeMode) {
+              setIsRealTimeMode(false);
+            }
           }
         }
       } catch (error) {
@@ -516,7 +542,7 @@ export default function Dashboard() {
     const interval = setInterval(updateMarketStatus, 60 * 1000);
 
     return () => clearInterval(interval);
-  }, [chartHours, isRealTimeMode]);
+  }, []); // Only run once on mount, don't depend on chartHours or isRealTimeMode
 
   // Function to refresh market data - calls all APIs
   const refreshMarketData = async () => {
@@ -580,7 +606,7 @@ export default function Dashboard() {
     }
   };
 
-  // Update chart and indicators when stock changes
+  // Update chart and indicators when stock changes or hours change (only if not manually set or stock changed)
   useEffect(() => {
     const loadChartData = async () => {
       if (!selectedStock) return;
@@ -588,12 +614,49 @@ export default function Dashboard() {
       try {
         console.log(`[Chart] Fetching intraday data for ${selectedStock.symbol}, last ${chartHours} hours...`);
         
-        // Use intraday data for real-time view (last 2 hours by default)
+        // Use intraday data for real-time view
         const intradayData = await fetchIntradayData(selectedStock.symbol, chartHours, 1000);
         console.log(`[Chart] Received ${intradayData?.length || 0} intraday data points for ${selectedStock.symbol}`);
         
         if (intradayData && intradayData.length > 0) {
-          setChartData(intradayData);
+          // Format time labels based on data granularity
+          const formattedData = intradayData.map((d: any) => {
+            const timestamp = d.timestamp ? new Date(d.timestamp) : new Date(d.date);
+            let timeStr: string;
+            
+            if (chartHours <= 1) {
+              // For 1 hour or less, show seconds
+              timeStr = timestamp.toLocaleTimeString('en-US', { 
+                hour: '2-digit', 
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false 
+              });
+            } else if (chartHours <= 6) {
+              // For 2-6 hours, show minutes
+              timeStr = timestamp.toLocaleTimeString('en-US', { 
+                hour: '2-digit', 
+                minute: '2-digit',
+                hour12: false 
+              });
+            } else {
+              // For longer periods, show hours and minutes
+              timeStr = timestamp.toLocaleTimeString('en-US', { 
+                hour: '2-digit', 
+                minute: '2-digit',
+                hour12: false 
+              });
+            }
+            
+            return {
+              ...d,
+              time: timeStr,
+              date: d.date || timestamp.toISOString(),
+              timestamp: d.timestamp || timestamp.getTime()
+            };
+          });
+          
+          setChartData(formattedData);
         } else {
           // Fallback: try daily historical data if no intraday data
           console.log(`[Chart] No intraday data, trying daily historical data...`);
@@ -658,7 +721,54 @@ export default function Dashboard() {
 
     loadChartData();
     loadIndicators();
-  }, [selectedStock, chartHours]);
+  }, [selectedStock]); // Only reload when stock changes, not when hours change (to respect manual zoom)
+  
+  // Separate effect to reload chart when hours change (only if user manually changed it)
+  useEffect(() => {
+    if (selectedStock && userManuallySetHours) {
+      const loadChartData = async () => {
+        try {
+          console.log(`[Chart] Reloading data for manual zoom: ${chartHours} hours`);
+          const intradayData = await fetchIntradayData(selectedStock.symbol, chartHours, 1000);
+          
+          if (intradayData && intradayData.length > 0) {
+            const formattedData = intradayData.map((d: any) => {
+              const timestamp = d.timestamp ? new Date(d.timestamp) : new Date(d.date);
+              let timeStr: string;
+              
+              if (chartHours <= 1) {
+                timeStr = timestamp.toLocaleTimeString('en-US', { 
+                  hour: '2-digit', 
+                  minute: '2-digit',
+                  second: '2-digit',
+                  hour12: false 
+                });
+              } else {
+                timeStr = timestamp.toLocaleTimeString('en-US', { 
+                  hour: '2-digit', 
+                  minute: '2-digit',
+                  hour12: false 
+                });
+              }
+              
+              return {
+                ...d,
+                time: timeStr,
+                date: d.date || timestamp.toISOString(),
+                timestamp: d.timestamp || timestamp.getTime()
+              };
+            });
+            
+            setChartData(formattedData);
+          }
+        } catch (err) {
+          console.error('Error reloading chart data for zoom:', err);
+        }
+      };
+      
+      loadChartData();
+    }
+  }, [chartHours, userManuallySetHours, selectedStock]);
 
   // Simulate Bot Activity with Advanced AI
   useEffect(() => {
@@ -992,27 +1102,37 @@ export default function Dashboard() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
                       const newHours = Math.max(1, chartHours - 1);
+                      console.log(`[Chart] Decreasing hours: ${chartHours} -> ${newHours}`);
+                      setUserManuallySetHours(true); // Mark as manually set
                       setChartHours(newHours);
                     }}
                     className="h-7 px-2 text-xs"
                     disabled={chartHours <= 1}
+                    type="button"
                   >
                     -
                   </Button>
-                  <span className="text-xs text-muted-foreground min-w-[60px] text-center">
+                  <span className="text-xs text-muted-foreground min-w-[60px] text-center font-mono">
                     {chartHours}h
                   </span>
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
                       const newHours = Math.min(24, chartHours + 1);
+                      console.log(`[Chart] Increasing hours: ${chartHours} -> ${newHours}`);
+                      setUserManuallySetHours(true); // Mark as manually set
                       setChartHours(newHours);
                     }}
                     className="h-7 px-2 text-xs"
                     disabled={chartHours >= 24}
+                    type="button"
                   >
                     +
                   </Button>
