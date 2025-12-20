@@ -157,6 +157,11 @@ export default function Dashboard() {
   const lastUpdateTimeRef = useRef<number>(0); // Track last chart update time to throttle
   const updateThrottleMs = 30000; // Update chart every 30 seconds (not every price update)
 
+  // Debug: Log chartHours changes
+  useEffect(() => {
+    console.log(`[Chart] chartHours changed to: ${chartHours}, userManuallySetHours: ${userManuallySetHours}`);
+  }, [chartHours, userManuallySetHours]);
+
   // WebSocket connection for real-time updates with all event types
   const { 
     isConnected, 
@@ -1089,7 +1094,7 @@ export default function Dashboard() {
           {/* Main Chart Card */}
           <Card className="flex-1 bg-black/40 border-white/10 backdrop-blur-sm relative overflow-hidden group">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-primary to-transparent opacity-50" />
-            <CardHeader className="flex flex-row items-center justify-between pb-2 gap-4">
+            <CardHeader className="flex flex-row items-center justify-between pb-2 gap-4" onClick={(e) => e.stopPropagation()}>
               <div className="flex-1 min-w-0">
                 <CardTitle className="text-3xl font-orbitron tracking-wider text-white flex items-baseline gap-3">
                   {selectedStock?.symbol || 'Loading...'}
@@ -1104,46 +1109,40 @@ export default function Dashboard() {
                 </p>
               </div>
               {/* Chart Zoom Controls and Stock Change - All on same line */}
-              <div className="flex items-center gap-3 flex-shrink-0">
+              <div className="flex items-center gap-3 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                 {/* Chart Zoom Controls */}
-                <div className="flex items-center gap-2 border-r border-white/10 pr-3">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
+                <div className="flex items-center gap-2 border-r border-white/10 pr-3" style={{ zIndex: 10 }}>
+                  <button
+                    onClick={() => {
                       const newHours = Math.max(1, chartHours - 1);
-                      console.log(`[Chart] Decreasing hours: ${chartHours} -> ${newHours}`);
-                      setUserManuallySetHours(true); // Mark as manually set
+                      console.log(`[Chart] Button clicked! Decreasing hours: ${chartHours} -> ${newHours}`);
+                      setUserManuallySetHours(true);
                       setChartHours(newHours);
                     }}
-                    className="h-7 px-2 text-xs"
                     disabled={chartHours <= 1}
+                    className="h-8 w-8 px-2 text-sm border border-white/30 rounded-md bg-black/40 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-white font-bold cursor-pointer transition-all active:scale-95 relative z-10"
                     type="button"
+                    aria-label="Decrease chart hours"
                   >
-                    -
-                  </Button>
-                  <span className="text-xs text-muted-foreground min-w-[60px] text-center font-mono">
+                    −
+                  </button>
+                  <span className="text-xs text-muted-foreground min-w-[60px] text-center font-mono select-none">
                     {chartHours}h
                   </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
+                  <button
+                    onClick={() => {
                       const newHours = Math.min(24, chartHours + 1);
-                      console.log(`[Chart] Increasing hours: ${chartHours} -> ${newHours}`);
-                      setUserManuallySetHours(true); // Mark as manually set
+                      console.log(`[Chart] Button clicked! Increasing hours: ${chartHours} -> ${newHours}`);
+                      setUserManuallySetHours(true);
                       setChartHours(newHours);
                     }}
-                    className="h-7 px-2 text-xs"
                     disabled={chartHours >= 24}
+                    className="h-8 w-8 px-2 text-sm border border-white/30 rounded-md bg-black/40 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-white font-bold cursor-pointer transition-all active:scale-95 relative z-10"
                     type="button"
+                    aria-label="Increase chart hours"
                   >
                     +
-                  </Button>
+                  </button>
                 </div>
                 {/* Stock Change Badge - Inline with zoom controls */}
                 {selectedStock && (
