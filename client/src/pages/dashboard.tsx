@@ -1460,11 +1460,7 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent className="h-[calc(100%-80px)] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart 
-                  data={chartData}
-                  isAnimationActive={false}
-                  animationDuration={0}
-                >
+                <AreaChart data={chartData}>
                   <defs>
                     <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor={selectedStock && isPositiveChange(selectedStock.change) ? "var(--color-primary)" : "var(--color-destructive)"} stopOpacity={0.3}/>
