@@ -33,8 +33,15 @@ export interface MarketMover {
 
 // Get stock quote
 export async function getStockQuote(symbol: string): Promise<StockQuote> {
+  // Ensure symbol is a string, not an object
+  const symbolStr = typeof symbol === 'string' ? symbol.trim() : String(symbol);
+  
+  if (!symbolStr || symbolStr === '[object Object]' || symbolStr.length === 0) {
+    throw new Error(`Invalid symbol: ${symbolStr || 'undefined'}`);
+  }
+  
   try {
-    const quote: any = await yahooFinanceInstance.quote(symbol);
+    const quote: any = await yahooFinanceInstance.quote(symbolStr);
 
     if (!quote) {
       throw new Error(`No quote found for symbol: ${symbol}`);

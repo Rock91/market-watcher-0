@@ -13,7 +13,17 @@ import { calculateAllIndicators, getVolatilityLevel, getRSILevel } from '../../s
 
 // Get stock quote - first check DB, then fallback to Yahoo Finance
 export async function getStockQuoteController(req: Request, res: Response) {
-  const { symbol } = req.params;
+  let { symbol } = req.params;
+  
+  // Ensure symbol is a string, not an object
+  if (typeof symbol !== 'string') {
+    symbol = String(symbol);
+  }
+  symbol = symbol.trim();
+  
+  if (!symbol || symbol === '[object Object]' || symbol.length === 0) {
+    return res.status(400).json({ error: `Invalid symbol: ${symbol || 'undefined'}` });
+  }
 
   try {
     console.log(`[${new Date().toISOString()}] Fetching quote for symbol: ${symbol}`);

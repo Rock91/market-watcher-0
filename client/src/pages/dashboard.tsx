@@ -251,10 +251,28 @@ export default function Dashboard() {
         if (trending && trending.symbols && trending.symbols.length > 0) {
           console.log('[Dashboard] Converting trending symbols to quotes...');
           const convertTrendingToStockQuotes = async () => {
+            // Extract symbol strings - handle both string arrays and object arrays
+            const symbolStrings = trending.symbols.map((item: any) => {
+              if (typeof item === 'string') {
+                return item;
+              } else if (item && typeof item === 'object' && item.symbol) {
+                return item.symbol;
+              } else if (item && typeof item === 'object' && item.name) {
+                return item.name;
+              }
+              return String(item); // Fallback to string conversion
+            }).filter((s: string) => s && s !== '[object Object]'); // Filter out invalid symbols
+            
             const quotes = await Promise.all(
-              trending.symbols.map(async (symbol: string) => {
+              symbolStrings.map(async (symbol: string) => {
                 try {
-                  const quote = await fetchStockQuote(symbol);
+                  // Ensure symbol is a string
+                  const symbolStr = String(symbol).trim();
+                  if (!symbolStr || symbolStr === '[object Object]') {
+                    console.warn(`[Dashboard] Invalid symbol: ${symbol}`);
+                    return null;
+                  }
+                  const quote = await fetchStockQuote(symbolStr);
                   return {
                     ...quote,
                     changeFormatted: formatChangePercent(quote.changePercent || 0),
@@ -264,8 +282,8 @@ export default function Dashboard() {
                   console.warn(`Failed to fetch quote for trending symbol ${symbol}:`, err);
                   // Fallback if quote fetch fails
                   return {
-                    symbol: symbol,
-                    name: symbol,
+                    symbol: String(symbol),
+                    name: String(symbol),
                     price: 0,
                     change: 0,
                     changePercent: 0,
@@ -393,13 +411,31 @@ export default function Dashboard() {
         const quotes = await Promise.all(
           trendingSymbols.map(async (trending: TrendingSymbol) => {
             try {
-              const quote = await fetchStockQuote(trending.symbol);
-              return quote;
-            } catch (err) {
-              // Fallback if quote fetch fails
+              // Ensure symbol is a string, not an object
+              const symbolStr = typeof trending === 'string' 
+                ? trending 
+                : (trending?.symbol ? String(trending.symbol) : String(trending));
+              
+              if (!symbolStr || symbolStr === '[object Object]') {
+                console.warn(`[WebSocket] Invalid trending symbol:`, trending);
+                return null;
+              }
+              
+              const quote = await fetchStockQuote(symbolStr);
               return {
-                symbol: trending.symbol,
-                name: trending.name || trending.symbol,
+                ...quote,
+                changeFormatted: formatChangePercent(quote.changePercent || 0),
+                vol: quote.vol || `${(quote.volume || 0).toLocaleString()}`
+              } as StockQuote;
+            } catch (err) {
+              console.warn(`Failed to fetch quote for trending symbol:`, err);
+              // Fallback if quote fetch fails
+              const symbolStr = typeof trending === 'string' 
+                ? trending 
+                : (trending?.symbol ? String(trending.symbol) : 'UNKNOWN');
+              return {
+                symbol: symbolStr,
+                name: (typeof trending === 'object' && trending?.name) ? String(trending.name) : symbolStr,
                 price: 0,
                 change: 0,
                 changePercent: 0,
