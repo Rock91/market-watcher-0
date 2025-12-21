@@ -1,7 +1,16 @@
 import yahooFinance from 'yahoo-finance2';
 
-// Initialize Yahoo Finance API
-export const yahooFinanceInstance = new yahooFinance();
+// Initialize Yahoo Finance API with validation error handling
+// Configure to skip validation errors gracefully - data is often valid even when schema validation fails
+export const yahooFinanceInstance = new yahooFinance({
+  validation: {
+    logErrors: false, // Don't log validation errors to console
+    logOptions: {
+      logErrors: false,
+      logOptionsErrors: false
+    }
+  }
+});
 
 // Stock quote interface
 export interface StockQuote {
@@ -62,7 +71,8 @@ export async function getStockQuote(symbol: string): Promise<StockQuote> {
 export async function getMarketMovers(type: 'gainers' | 'losers', count: number = 20): Promise<MarketMover[]> {
   try {
     const scrId = type === 'gainers' ? 'day_gainers' : 'day_losers';
-    const screen = await yahooFinanceInstance.screener({ scrIds: scrId, count });
+    // Use validation: 'off' to skip validation errors - data is often valid even when schema validation fails
+    const screen = await yahooFinanceInstance.screener({ scrIds: scrId, count }, { validateResult: false });
 
     return screen?.quotes?.map((quote: any) => ({
       symbol: quote.symbol,
