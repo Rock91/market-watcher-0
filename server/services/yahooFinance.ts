@@ -66,7 +66,12 @@ export async function getMarketMovers(type: 'gainers' | 'losers', count: number 
     const scrId = type === 'gainers' ? 'day_gainers' : 'day_losers';
     // Use validateResult: false in moduleOptions (3rd parameter) to skip validation errors
     // Data is often valid even when schema validation fails
-    const screen = await yahooFinanceInstance.screener({ scrIds: scrId, count }, undefined, { validateResult: false });
+    // Type assertion needed due to strict TypeScript definitions
+    const screen = await yahooFinanceInstance.screener(
+      { scrIds: scrId, count }, 
+      undefined, 
+      { validateResult: false } as any
+    );
 
     return screen?.quotes?.map((quote: any) => ({
       symbol: quote.symbol,
