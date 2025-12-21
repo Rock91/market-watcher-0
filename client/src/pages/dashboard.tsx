@@ -154,8 +154,8 @@ export default function Dashboard() {
   const [chartHours, setChartHours] = useState(2); // Default: last 2 hours (or 24 if market closed)
   const [isRealTimeMode, setIsRealTimeMode] = useState(true); // Default: LIVE mode
   const [userManuallySetHours, setUserManuallySetHours] = useState(false); // Track if user manually changed hours
-  const lastUpdateTimeRef = useRef<number>(0); // Track last chart update time to throttle
-  const updateThrottleMs = 30000; // Update chart every 30 seconds (not every price update)
+  const lastChartUpdateRef = useRef<number>(0); // Track last chart update timestamp
+  const chartUpdateThrottleMs = 5000; // Update chart at most every 5 seconds (matching server frequency)
 
   // Debug: Log chartHours changes
   useEffect(() => {
@@ -460,82 +460,154 @@ export default function Dashboard() {
           } : null);
           
           // Update chart in real-time if market is open and in real-time mode
-          // Use actual timestamp from update, not current time
+          // Use actual timestamp from update, ensure proper time handling
           if (marketStatus?.isOpen && isRealTimeMode) {
-            const updateTimestamp = update.timestamp || Date.now();
-            const updateDate = new Date(updateTimestamp);
+            // Parse timestamp correctly - could be number (ms) or string (ISO)
+            let updateTimestamp: number;
+            if (typeof update.timestamp === 'number') {
+              updateTimestamp = update.timestamp;
+            } else if (typeof update.timestamp === 'string') {
+              updateTimestamp = new Date(update.timestamp).getTime();
+            } else {
+              updateTimestamp = Date.now();
+            }
             
-            // Only add data point if it's actually new (not duplicate timestamp)
-            setChartData(prev => {
-              // Check if we already have data for this timestamp (within 1 second)
-              const existingIndex = prev.findIndex((d: any) => {
-                const dataTime = d.timestamp ? new Date(d.timestamp).getTime() : new Date(d.date).getTime();
-                return Math.abs(dataTime - updateTimestamp) < 1000; // Within 1 second
-              });
+            const updateDate = new Date(updateTimestamp);
+            const now = Date.now();
+            
+            // Throttle: Only update chart if enough time has passed (5 seconds minimum between updates)
+            // But use the actual update timestamp, not current time
+            if (now - lastChartUpdateRef.current >= chartUpdateThrottleMs) {
+              lastChartUpdateRef.current = now;
               
-              let newData = [...prev];
-              
-              // Format time based on chart hours - show seconds for short periods, minutes for longer
-              let timeStr: string;
-              if (chartHours <= 1) {
-                // For 1 hour or less, show seconds
-                timeStr = updateDate.toLocaleTimeString('en-US', { 
-                  hour: '2-digit', 
-                  minute: '2-digit',
-                  second: '2-digit',
-                  hour12: false,
-                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+              setChartData(prev => {
+                // Check if we already have data for this exact timestamp (within 1 second tolerance)
+                const existingIndex = prev.findIndex((d: any) => {
+                  let dataTime: number;
+                  if (d.timestamp) {
+                    dataTime = typeof d.timestamp === 'number' ? d.timestamp : new Date(d.timestamp).getTime();
+                  } else if (d.date) {
+                    dataTime = new Date(d.date).getTime();
+                  } else {
+                    return false;
+                  }
+                  // Check if timestamps are within 1 second (accounting for network delay)
+                  return Math.abs(dataTime - updateTimestamp) < 1000;
                 });
-              } else {
-                // For longer periods, show minutes
-                timeStr = updateDate.toLocaleTimeString('en-US', { 
-                  hour: '2-digit', 
-                  minute: '2-digit',
-                  hour12: false,
-                  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                
+                let newData = [...prev];
+                
+                // Format time using system timezone
+                const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                let timeStr: string;
+                if (chartHours <= 1) {
+                  timeStr = updateDate.toLocaleTimeString('en-US', { 
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: false,
+                    timeZone: timeZone
+                  });
+                } else {
+                  timeStr = updateDate.toLocaleTimeString('en-US', { 
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    hour12: false,
+                    timeZone: timeZone
+                  });
+                }
+                
+                // Update existing point or add new one
+                if (existingIndex >= 0) {
+                  // Update existing data point with latest price
+                  newData[existingIndex] = {
+                    ...newData[existingIndex],
+                    time: timeStr,
+                    price: update.price,
+                    date: updateDate.toISOString(),
+                    timestamp: updateTimestamp,
+                    volume: update.volume || newData[existingIndex].volume || 0,
+                    change: change,
+                    changePercent: changePercent
+                  };
+                } else {
+                  // Only add if this timestamp is newer than the last point (prevent out-of-order data)
+                  const lastPoint = newData[newData.length - 1];
+                  if (lastPoint) {
+                    let lastTime: number;
+                    if (lastPoint.timestamp) {
+                      lastTime = typeof lastPoint.timestamp === 'number' ? lastPoint.timestamp : new Date(lastPoint.timestamp).getTime();
+                    } else if (lastPoint.date) {
+                      lastTime = new Date(lastPoint.date).getTime();
+                    } else {
+                      lastTime = 0;
+                    }
+                    
+                    // Only add if new timestamp is >= last timestamp (allow same second updates)
+                    if (updateTimestamp >= lastTime - 1000) {
+                      newData.push({
+                        time: timeStr,
+                        price: update.price,
+                        date: updateDate.toISOString(),
+                        timestamp: updateTimestamp,
+                        volume: update.volume || 0,
+                        change: change,
+                        changePercent: changePercent
+                      });
+                    }
+                  } else {
+                    // No existing data, add this point
+                    newData.push({
+                      time: timeStr,
+                      price: update.price,
+                      date: updateDate.toISOString(),
+                      timestamp: updateTimestamp,
+                      volume: update.volume || 0,
+                      change: change,
+                      changePercent: changePercent
+                    });
+                  }
+                }
+                
+                // Sort by timestamp to maintain chronological order
+                newData.sort((a: any, b: any) => {
+                  let timeA: number, timeB: number;
+                  
+                  if (a.timestamp) {
+                    timeA = typeof a.timestamp === 'number' ? a.timestamp : new Date(a.timestamp).getTime();
+                  } else if (a.date) {
+                    timeA = new Date(a.date).getTime();
+                  } else {
+                    timeA = 0;
+                  }
+                  
+                  if (b.timestamp) {
+                    timeB = typeof b.timestamp === 'number' ? b.timestamp : new Date(b.timestamp).getTime();
+                  } else if (b.date) {
+                    timeB = new Date(b.date).getTime();
+                  } else {
+                    timeB = 0;
+                  }
+                  
+                  return timeA - timeB;
                 });
-              }
-              
-              // Update existing point or add new one
-              if (existingIndex >= 0) {
-                // Update existing data point
-                newData[existingIndex] = {
-                  ...newData[existingIndex],
-                  time: timeStr,
-                  price: update.price,
-                  date: updateDate.toISOString(),
-                  timestamp: updateTimestamp,
-                  volume: update.volume || newData[existingIndex].volume || 0,
-                  change: change,
-                  changePercent: changePercent
-                };
-              } else {
-                // Add new data point
-                newData.push({
-                  time: timeStr,
-                  price: update.price,
-                  date: updateDate.toISOString(),
-                  timestamp: updateTimestamp,
-                  volume: update.volume || 0,
-                  change: change,
-                  changePercent: changePercent
+                
+                // Keep only data within the selected time range (from current time, not update time)
+                const currentTime = Date.now();
+                const cutoffTime = currentTime - (chartHours * 60 * 60 * 1000);
+                return newData.filter((d: any) => {
+                  let dataTime: number;
+                  if (d.timestamp) {
+                    dataTime = typeof d.timestamp === 'number' ? d.timestamp : new Date(d.timestamp).getTime();
+                  } else if (d.date) {
+                    dataTime = new Date(d.date).getTime();
+                  } else {
+                    return false;
+                  }
+                  return dataTime >= cutoffTime;
                 });
-              }
-              
-              // Sort by timestamp to keep data in order
-              newData.sort((a: any, b: any) => {
-                const timeA = a.timestamp ? new Date(a.timestamp).getTime() : new Date(a.date).getTime();
-                const timeB = b.timestamp ? new Date(b.timestamp).getTime() : new Date(b.date).getTime();
-                return timeA - timeB;
               });
-              
-              // Keep only data within the selected time range
-              const cutoffTime = updateDate.getTime() - (chartHours * 60 * 60 * 1000);
-              return newData.filter((d: any) => {
-                const dataTime = d.timestamp ? new Date(d.timestamp).getTime() : new Date(d.date).getTime();
-                return dataTime >= cutoffTime;
-              });
-            });
+            }
           }
         }
       });
@@ -746,14 +818,33 @@ export default function Dashboard() {
           // Use system timezone for consistency
           const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
           const formattedData = intradayData.map((d: any) => {
-            // Use timestamp from data, or parse date string
+            // Parse timestamp correctly - could be string (ISO) or number (ms)
             let timestamp: Date;
+            let timestampMs: number;
+            
             if (d.timestamp) {
-              timestamp = new Date(d.timestamp);
+              if (typeof d.timestamp === 'number') {
+                timestampMs = d.timestamp;
+                timestamp = new Date(d.timestamp);
+              } else if (typeof d.timestamp === 'string') {
+                timestamp = new Date(d.timestamp);
+                timestampMs = timestamp.getTime();
+              } else {
+                timestamp = new Date();
+                timestampMs = timestamp.getTime();
+              }
             } else if (d.date) {
               timestamp = new Date(d.date);
+              timestampMs = timestamp.getTime();
             } else {
               timestamp = new Date();
+              timestampMs = timestamp.getTime();
+            }
+            
+            // Ensure timestamp is valid
+            if (isNaN(timestampMs)) {
+              timestamp = new Date();
+              timestampMs = timestamp.getTime();
             }
             
             let timeStr: string;
@@ -789,17 +880,18 @@ export default function Dashboard() {
               ...d,
               time: timeStr,
               date: d.date || timestamp.toISOString(),
-              timestamp: d.timestamp || timestamp.getTime()
+              timestamp: timestampMs // Always use number (milliseconds) for consistency
             };
           });
           
           // Sort by timestamp to ensure correct order
           formattedData.sort((a: any, b: any) => {
-            const timeA = a.timestamp ? new Date(a.timestamp).getTime() : new Date(a.date).getTime();
-            const timeB = b.timestamp ? new Date(b.timestamp).getTime() : new Date(b.date).getTime();
+            const timeA = typeof a.timestamp === 'number' ? a.timestamp : (a.timestamp ? new Date(a.timestamp).getTime() : new Date(a.date).getTime());
+            const timeB = typeof b.timestamp === 'number' ? b.timestamp : (b.timestamp ? new Date(b.timestamp).getTime() : new Date(b.date).getTime());
             return timeA - timeB;
           });
           
+          console.log(`[Chart] Loaded ${formattedData.length} data points, time range: ${formattedData[0]?.time} to ${formattedData[formattedData.length - 1]?.time}`);
           setChartData(formattedData);
         } else {
           // Fallback: try daily historical data if no intraday data
@@ -878,13 +970,33 @@ export default function Dashboard() {
           if (intradayData && intradayData.length > 0) {
             const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
             const formattedData = intradayData.map((d: any) => {
+              // Parse timestamp correctly - could be string (ISO) or number (ms)
               let timestamp: Date;
+              let timestampMs: number;
+              
               if (d.timestamp) {
-                timestamp = new Date(d.timestamp);
+                if (typeof d.timestamp === 'number') {
+                  timestampMs = d.timestamp;
+                  timestamp = new Date(d.timestamp);
+                } else if (typeof d.timestamp === 'string') {
+                  timestamp = new Date(d.timestamp);
+                  timestampMs = timestamp.getTime();
+                } else {
+                  timestamp = new Date();
+                  timestampMs = timestamp.getTime();
+                }
               } else if (d.date) {
                 timestamp = new Date(d.date);
+                timestampMs = timestamp.getTime();
               } else {
                 timestamp = new Date();
+                timestampMs = timestamp.getTime();
+              }
+              
+              // Ensure timestamp is valid
+              if (isNaN(timestampMs)) {
+                timestamp = new Date();
+                timestampMs = timestamp.getTime();
               }
               
               let timeStr: string;
@@ -910,14 +1022,14 @@ export default function Dashboard() {
                 ...d,
                 time: timeStr,
                 date: d.date || timestamp.toISOString(),
-                timestamp: d.timestamp || timestamp.getTime()
+                timestamp: timestampMs // Always use number (milliseconds) for consistency
               };
             });
             
             // Sort by timestamp
             formattedData.sort((a: any, b: any) => {
-              const timeA = a.timestamp ? new Date(a.timestamp).getTime() : new Date(a.date).getTime();
-              const timeB = b.timestamp ? new Date(b.timestamp).getTime() : new Date(b.date).getTime();
+              const timeA = typeof a.timestamp === 'number' ? a.timestamp : (a.timestamp ? new Date(a.timestamp).getTime() : new Date(a.date).getTime());
+              const timeB = typeof b.timestamp === 'number' ? b.timestamp : (b.timestamp ? new Date(b.timestamp).getTime() : new Date(b.date).getTime());
               return timeA - timeB;
             });
             
@@ -1348,7 +1460,11 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent className="h-[calc(100%-80px)] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData}>
+                <AreaChart 
+                  data={chartData}
+                  isAnimationActive={false}
+                  animationDuration={0}
+                >
                   <defs>
                     <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor={selectedStock && isPositiveChange(selectedStock.change) ? "var(--color-primary)" : "var(--color-destructive)"} stopOpacity={0.3}/>
