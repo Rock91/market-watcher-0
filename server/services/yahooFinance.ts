@@ -72,8 +72,29 @@ export async function getMarketMovers(type: 'gainers' | 'losers', count: number 
       volume: quote.regularMarketVolume || 0,
       currency: quote.currency || 'USD'
     })) || [];
-  } catch (error) {
-    console.error(`Error fetching market movers for ${type}:`, error);
+  } catch (error: any) {
+    // Handle Yahoo Finance validation errors - data might still be available in error.result
+    const errorName = error?.name || error?.constructor?.name || '';
+    const isValidationError = errorName.includes('FailedYahooValidationError') || 
+                              errorName.includes('ValidationError') ||
+                              error?.message?.includes('Failed Yahoo Schema validation');
+    
+    if (isValidationError && error?.result?.quotes) {
+      // Extract data from validation error - data is valid, just schema validation failed
+      console.warn(`[Yahoo Finance] Schema validation failed for ${type} market movers, but extracting data from error result`);
+      const quotes = error.result.quotes || [];
+      return quotes.map((quote: any) => ({
+        symbol: quote.symbol || '',
+        name: quote.shortName || quote.longName || '',
+        price: quote.regularMarketPrice || 0,
+        changePercent: quote.regularMarketChangePercent || 0,
+        volume: quote.regularMarketVolume || 0,
+        currency: quote.currency || 'USD'
+      }));
+    }
+    
+    // For other errors, log and re-throw
+    console.error(`[Yahoo Finance] Error fetching market movers for ${type}:`, error?.message || error);
     throw error;
   }
 }

@@ -159,16 +159,29 @@ export class PriceBroadcaster {
 
       // Fallback to Yahoo Finance if DB has no recent snapshot
       if (gainers.length === 0 || losers.length === 0) {
-        const [gainersY, losersY] = await Promise.all([
-          getMarketMovers('gainers', 20),
-          getMarketMovers('losers', 20),
-        ]);
-        gainers = gainersY;
-        losers = losersY;
+        try {
+          const [gainersY, losersY] = await Promise.all([
+            getMarketMovers('gainers', 20).catch(err => {
+              console.warn(`[Broadcaster] Failed to fetch gainers from Yahoo Finance:`, err?.message || err);
+              return [];
+            }),
+            getMarketMovers('losers', 20).catch(err => {
+              console.warn(`[Broadcaster] Failed to fetch losers from Yahoo Finance:`, err?.message || err);
+              return [];
+            }),
+          ]);
+          
+          // Only update if we got data
+          if (gainersY.length > 0) gainers = gainersY;
+          if (losersY.length > 0) losers = losersY;
 
-        // Store ONLY on cache miss (avoid inserting duplicates every 30s)
-        if (gainers.length > 0) storeMarketMovers('gainers', gainers).catch(() => {});
-        if (losers.length > 0) storeMarketMovers('losers', losers).catch(() => {});
+          // Store ONLY on cache miss (avoid inserting duplicates every 30s)
+          if (gainers.length > 0) storeMarketMovers('gainers', gainers).catch(() => {});
+          if (losers.length > 0) storeMarketMovers('losers', losers).catch(() => {});
+        } catch (error) {
+          console.warn(`[Broadcaster] Error fetching market movers, using cached data if available:`, error);
+          // Continue with whatever data we have (from DB or empty arrays)
+        }
       }
 
       // Note: changePercent is already a percentage value (e.g., -11.85 for -11.85%)
