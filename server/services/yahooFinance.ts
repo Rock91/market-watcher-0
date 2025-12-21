@@ -105,8 +105,22 @@ export async function getHistoricalData(symbol: string, period1?: Date, period2?
   try {
     const data = await yahooFinanceInstance.historical(symbol, queryOptions);
     return data;
-  } catch (error) {
-    console.error(`Error fetching historical data for ${symbol}:`, error);
+  } catch (error: any) {
+    // Check if it's a "no data" or "delisted" error - these are expected for some symbols
+    const errorMessage = error?.message || String(error);
+    const isDelistedError = errorMessage.includes('No data found') || 
+                           errorMessage.includes('delisted') ||
+                           errorMessage.includes('not found');
+    
+    if (isDelistedError) {
+      // Log as warning (not error) for delisted symbols - this is expected
+      console.warn(`[Yahoo Finance] No historical data available for ${symbol} (may be delisted or unavailable)`);
+      // Return empty array instead of throwing - let the controller handle fallback
+      return [];
+    }
+    
+    // For other errors, log and re-throw
+    console.error(`[Yahoo Finance] Error fetching historical data for ${symbol}:`, error);
     throw error;
   }
 }
