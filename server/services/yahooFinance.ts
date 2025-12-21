@@ -64,8 +64,9 @@ export async function getStockQuote(symbol: string): Promise<StockQuote> {
 export async function getMarketMovers(type: 'gainers' | 'losers', count: number = 20): Promise<MarketMover[]> {
   try {
     const scrId = type === 'gainers' ? 'day_gainers' : 'day_losers';
-    // Use validation: 'off' to skip validation errors - data is often valid even when schema validation fails
-    const screen = await yahooFinanceInstance.screener({ scrIds: scrId, count }, { validateResult: false });
+    // Use validateResult: false in moduleOptions (3rd parameter) to skip validation errors
+    // Data is often valid even when schema validation fails
+    const screen = await yahooFinanceInstance.screener({ scrIds: scrId, count }, undefined, { validateResult: false });
 
     return screen?.quotes?.map((quote: any) => ({
       symbol: quote.symbol,
