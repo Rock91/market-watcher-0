@@ -240,34 +240,6 @@ export default function Dashboard() {
           popularQuotes: popularQuotes.filter(q => q !== null).length
         });
 
-        // Load recent trades from database
-        try {
-          const dbTrades = await fetchRecentTrades(50);
-          if (dbTrades && dbTrades.length > 0) {
-            // Convert database trades to Transaction format
-            const dbTransactions: Transaction[] = dbTrades.map(trade => ({
-              id: parseInt(trade.tradeId.replace(/-/g, '').substring(0, 13)) || Date.now(),
-              symbol: trade.symbol,
-              action: trade.action,
-              amount: trade.amount,
-              profit: trade.profit || 0,
-              time: new Date(trade.time).toLocaleTimeString()
-            }));
-            setTransactions(prev => {
-              // Merge with existing transactions, avoiding duplicates
-              const merged = [...dbTransactions, ...prev];
-              const unique = merged.filter((tx, index, self) => 
-                index === self.findIndex(t => t.id === tx.id && t.symbol === tx.symbol && t.time === tx.time)
-              );
-              return unique.slice(0, 50);
-            });
-            console.log(`[Dashboard] Loaded ${dbTrades.length} trades from database`);
-          }
-        } catch (error) {
-          console.error('Failed to load trades from database:', error);
-          // Continue - trades will still work locally
-        }
-        
         // Debug: Log first few items from each array
         console.log('[Dashboard] Sample gainers:', gainers.slice(0, 3));
         console.log('[Dashboard] Sample losers:', losers.slice(0, 3));
@@ -275,14 +247,46 @@ export default function Dashboard() {
         setTopGainers(gainers);
         setTopLosers(losers);
 
+        // Convert trending symbols to StockQuote format
+        if (trending && trending.symbols && trending.symbols.length > 0) {
+          console.log('[Dashboard] Converting trending symbols to quotes...');
+          const convertTrendingToStockQuotes = async () => {
+            const quotes = await Promise.all(
+              trending.symbols.map(async (symbol: string) => {
+                try {
+                  const quote = await fetchStockQuote(symbol);
+                  return {
+                    ...quote,
+                    changeFormatted: formatChangePercent(quote.changePercent || 0),
+                    vol: quote.vol || `${(quote.volume || 0).toLocaleString()}`
+                  } as StockQuote;
+                } catch (err) {
+                  console.warn(`Failed to fetch quote for trending symbol ${symbol}:`, err);
+                  // Fallback if quote fetch fails
+                  return {
+                    symbol: symbol,
+                    name: symbol,
+                    price: 0,
+                    change: 0,
+                    changePercent: 0,
+                    changeFormatted: '0%',
+                    vol: '0',
+                    currency: 'USD'
+                  } as StockQuote;
+                }
+              })
+            );
+            setTrendingStocks(quotes.filter(q => q !== null) as StockQuote[]);
+            console.log(`[Dashboard] Loaded ${quotes.filter(q => q !== null).length} trending stock quotes`);
+          };
+          convertTrendingToStockQuotes();
+        } else {
+          setTrendingStocks([]);
+        }
+
         // Set initial selected stock
         if (gainers.length > 0) {
           setSelectedStock(gainers[0]);
-        }
-
-        // Log trending symbols for debugging
-        if (trending.symbols && trending.symbols.length > 0) {
-          console.log('[Dashboard] Trending symbols:', trending.symbols.map((s: any) => s.symbol).join(', '));
         }
 
         // Log popular stock quotes for debugging
@@ -291,7 +295,7 @@ export default function Dashboard() {
           console.log('[Dashboard] Pre-fetched quotes:', successfulQuotes.map((q: any) => `${q.symbol}: $${q.price?.toFixed(2)}`).join(', '));
         }
 
-        // Load recent trades from database
+        // Load recent trades from database (only once)
         try {
           const dbTrades = await fetchRecentTrades(50);
           if (dbTrades && dbTrades.length > 0) {
