@@ -1528,51 +1528,59 @@ export default function Dashboard() {
               </div>
             </CardHeader>
             <CardContent className="h-[calc(100%-80px)] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData}>
-                  <defs>
-                    <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={selectedStock && isPositiveChange(selectedStock.change) ? "var(--color-primary)" : "var(--color-destructive)"} stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor={selectedStock && isPositiveChange(selectedStock.change) ? "var(--color-primary)" : "var(--color-destructive)"} stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
-                  <XAxis dataKey="time" stroke="#666" fontSize={12} tickLine={false} axisLine={false} />
-                  <YAxis stroke="#666" fontSize={12} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#000', borderColor: '#333', color: '#fff' }}
-                    itemStyle={{ color: '#fff' }}
-                    formatter={(value: any, name: string, props: any) => {
-                      const currency = selectedStock?.currency || 'USD';
-                      const symbol = currency === 'USD' ? '$' : currency + ' ';
-                      return [`${symbol}${Number(value).toFixed(2)}`, 'Price'];
-                    }}
-                    labelFormatter={(label: string) => {
-                      // Find the full date from chartData
-                      const dataPoint = chartData.find((d: any) => d.time === label);
-                      if (dataPoint && dataPoint.date) {
-                        const date = new Date(dataPoint.date);
-                        return date.toLocaleString('en-US', { 
-                          month: 'short', 
-                          day: 'numeric', 
-                          year: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        });
-                      }
-                      return label;
-                    }}
-                  />
-                  <Area 
-                    type="monotone" 
-                    dataKey="price" 
-                    stroke={selectedStock && isPositiveChange(selectedStock.change) ? "var(--color-primary)" : "var(--color-destructive)"} 
-                    strokeWidth={2}
-                    fillOpacity={1} 
-                    fill="url(#colorPrice)" 
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
+              {chartData.length === 0 ? (
+                <div className="h-full flex items-center justify-center text-muted-foreground">
+                  <div className="text-center">
+                    <BarChart3 className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                    <p className="text-sm">Loading chart data...</p>
+                  </div>
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData}>
+                    <defs>
+                      <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={selectedStock && isPositiveChange(selectedStock.change) ? "var(--color-primary)" : "var(--color-destructive)"} stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor={selectedStock && isPositiveChange(selectedStock.change) ? "var(--color-primary)" : "var(--color-destructive)"} stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+                    <XAxis dataKey="time" stroke="#666" fontSize={12} tickLine={false} axisLine={false} />
+                    <YAxis stroke="#666" fontSize={12} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#000', borderColor: '#333', color: '#fff' }}
+                      itemStyle={{ color: '#fff' }}
+                      formatter={(value: any, name: string, props: any) => {
+                        const currency = selectedStock?.currency || 'USD';
+                        const symbol = currency === 'USD' ? '$' : currency + ' ';
+                        return [`${symbol}${Number(value).toFixed(2)}`, 'Price'];
+                      }}
+                      labelFormatter={(label: string) => {
+                        // Find the full date from chartData
+                        const dataPoint = chartData.find((d: any) => d.time === label);
+                        if (dataPoint && dataPoint.date) {
+                          const date = new Date(dataPoint.date);
+                          return date.toLocaleString('en-US', { 
+                            month: 'short', 
+                            day: 'numeric', 
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          });
+                        }
+                        return label;
+                      }}
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="price" 
+                      stroke={selectedStock && isPositiveChange(selectedStock.change) ? "var(--color-primary)" : "var(--color-destructive)"} 
+                      strokeWidth={2}
+                      fillOpacity={1} 
+                      fill="url(#colorPrice)" 
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
               )}
             </CardContent>
           </Card>
