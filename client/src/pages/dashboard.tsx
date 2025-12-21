@@ -1005,7 +1005,7 @@ export default function Dashboard() {
   
   // Separate effect to reload chart when hours change (only if user manually changed it)
   useEffect(() => {
-    if (selectedStock && userManuallySetHours) {
+    if (selectedStock && selectedStock.symbol && userManuallySetHours) {
       const loadChartData = async () => {
         try {
           console.log(`[Chart] Reloading data for manual zoom: ${chartHours} hours`);
@@ -1100,18 +1100,43 @@ export default function Dashboard() {
 
       try {
         // Get real market data for AI analysis
-        const historicalData = await fetchHistoricalData(randomStock.symbol, 30); // 30 days of daily data for AI analysis
-        const currentPrice = randomStock.price;
-        const historicalPrices = historicalData.map((d: any) => d.price);
+        if (!randomStock || !randomStock.symbol) {
+          console.warn('[Bot] Invalid stock selected, skipping AI signal');
+          return;
+        }
+        
+        const historicalData = await fetchHistoricalData(randomStock.symbol, 30).catch(err => {
+          console.warn(`[Bot] Failed to fetch historical data for ${randomStock.symbol}:`, err);
+          return [];
+        }); // 30 days of daily data for AI analysis
+        const currentPrice = randomStock.price || 0;
+        const historicalPrices = historicalData && historicalData.length > 0 
+          ? historicalData.map((d: any) => d.price || 0).filter((p: number) => p > 0)
+          : [currentPrice]; // Fallback to current price if no historical data
 
         // Generate AI signal using advanced strategies via API
+        const volumeStr = randomStock.vol || '0';
+        const volume = volumeStr.includes('M') 
+          ? parseInt(volumeStr.replace('M', '')) * 1000000
+          : (volumeStr.includes('K') 
+            ? parseInt(volumeStr.replace('K', '')) * 1000 
+            : parseInt(volumeStr) || 0);
+        
         const signal = await fetchAISignal({
           symbol: randomStock.symbol,
           price: currentPrice,
-          volume: parseInt(randomStock.vol.replace('M', '')) * 1000000,
-          historicalPrices,
+          volume: volume,
+          historicalPrices: historicalPrices.length > 0 ? historicalPrices : [currentPrice],
           strategy: aiStrategyRef.current,
           sentimentScore: (Math.random() - 0.5) * 2 // Mock sentiment score
+        }).catch(err => {
+          console.warn(`[Bot] Failed to generate AI signal for ${randomStock.symbol}:`, err);
+          // Return a default HOLD signal if API fails
+          return {
+            action: 'HOLD' as const,
+            confidence: 50,
+            reason: 'API error, defaulting to HOLD'
+          };
         });
 
         const { action, confidence, reason } = signal;
@@ -1548,6 +1573,7 @@ export default function Dashboard() {
                   />
                 </AreaChart>
               </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
 
