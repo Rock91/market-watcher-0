@@ -1978,6 +1978,9 @@ function StockCard({ stock, isSelected, onClick, type }: { stock: Stock, isSelec
         </div>
         <div className="text-right">
           <p className={`text-sm font-bold font-mono ${getChangeColor()}`}>
+            {stock.currency ? `${stock.currency} ` : '$'}{typeof stock.price === 'number' ? stock.price.toFixed(2) : stock.price}
+          </p>
+          <p className="text-[10px] text-muted-foreground">
             {(() => {
               if (typeof stock.change === 'string') {
                 return stock.change;
@@ -1988,9 +1991,6 @@ function StockCard({ stock, isSelected, onClick, type }: { stock: Stock, isSelec
               }
               return 'N/A';
             })()}
-          </p>
-          <p className="text-[10px] text-muted-foreground">
-            {stock.currency ? `${stock.currency} ` : '$'}{typeof stock.price === 'number' ? stock.price.toFixed(2) : stock.price}
           </p>
         </div>
       </div>
