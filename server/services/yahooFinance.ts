@@ -1,16 +1,9 @@
 import yahooFinance from 'yahoo-finance2';
 
-// Initialize Yahoo Finance API with validation error handling
-// Configure to skip validation errors gracefully - data is often valid even when schema validation fails
-export const yahooFinanceInstance = new yahooFinance({
-  validation: {
-    logErrors: false, // Don't log validation errors to console
-    logOptions: {
-      logErrors: false,
-      logOptionsErrors: false
-    }
-  }
-});
+// Initialize Yahoo Finance API
+// Note: Validation errors are handled per-call using validateResult: false option
+// This prevents schema validation errors from breaking functionality when data is actually valid
+export const yahooFinanceInstance = new yahooFinance();
 
 // Stock quote interface
 export interface StockQuote {
