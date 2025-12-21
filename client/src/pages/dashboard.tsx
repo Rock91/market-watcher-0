@@ -155,7 +155,7 @@ export default function Dashboard() {
   const [isRealTimeMode, setIsRealTimeMode] = useState(true); // Default: LIVE mode
   const [userManuallySetHours, setUserManuallySetHours] = useState(false); // Track if user manually changed hours
   const lastChartUpdateRef = useRef<number>(0); // Track last chart update timestamp
-  const chartUpdateThrottleMs = 5000; // Update chart at most every 5 seconds (matching server frequency)
+  const chartUpdateThrottleMs = 60000; // Update chart at most every 60 seconds (1 minute) to show minute-by-minute movement
 
   // Debug: Log chartHours changes
   useEffect(() => {
@@ -515,7 +515,8 @@ export default function Dashboard() {
             const updateDate = new Date(updateTimestamp);
             const now = Date.now();
             
-            // Throttle: Only update chart if enough time has passed (5 seconds minimum between updates)
+            // Throttle: Only update chart if enough time has passed (60 seconds = 1 minute minimum between updates)
+            // This ensures the chart moves in minutes, not seconds
             // But use the actual update timestamp, not current time
             if (now - lastChartUpdateRef.current >= chartUpdateThrottleMs) {
               lastChartUpdateRef.current = now;
@@ -1481,11 +1482,91 @@ export default function Dashboard() {
                 {/* Chart Zoom Controls */}
                 <div className="flex items-center gap-2 border-r border-white/10 pr-3" style={{ zIndex: 10 }}>
                   <button
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
                       const newHours = Math.max(1, chartHours - 1);
-                      console.log(`[Chart] Button clicked! Decreasing hours: ${chartHours} -> ${newHours}`);
+                      console.log(`[Chart] Decrease button clicked! Changing hours: ${chartHours} -> ${newHours}`);
                       setUserManuallySetHours(true);
                       setChartHours(newHours);
+                      // Force immediate chart reload
+                      if (selectedStock?.symbol) {
+                        fetchIntradayData(selectedStock.symbol, newHours, 1000)
+                          .then((intradayData) => {
+                            if (intradayData && intradayData.length > 0) {
+                              const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                              const formattedData = intradayData.map((d: any) => {
+                                let timestamp: Date;
+                                let timestampMs: number;
+                                
+                                if (d.timestamp) {
+                                  if (typeof d.timestamp === 'number') {
+                                    timestampMs = d.timestamp;
+                                    timestamp = new Date(d.timestamp);
+                                  } else if (typeof d.timestamp === 'string') {
+                                    timestamp = new Date(d.timestamp);
+                                    timestampMs = timestamp.getTime();
+                                  } else {
+                                    timestamp = new Date();
+                                    timestampMs = timestamp.getTime();
+                                  }
+                                } else if (d.date) {
+                                  timestamp = new Date(d.date);
+                                  timestampMs = timestamp.getTime();
+                                } else {
+                                  timestamp = new Date();
+                                  timestampMs = timestamp.getTime();
+                                }
+                                
+                                if (isNaN(timestampMs)) {
+                                  timestamp = new Date();
+                                  timestampMs = timestamp.getTime();
+                                }
+                                
+                                let timeStr: string;
+                                if (newHours <= 1) {
+                                  timeStr = timestamp.toLocaleTimeString('en-US', { 
+                                    hour: '2-digit', 
+                                    minute: '2-digit',
+                                    second: '2-digit',
+                                    hour12: false,
+                                    timeZone: timeZone
+                                  });
+                                } else {
+                                  timeStr = timestamp.toLocaleTimeString('en-US', { 
+                                    hour: '2-digit', 
+                                    minute: '2-digit',
+                                    hour12: false,
+                                    timeZone: timeZone
+                                  });
+                                }
+                                
+                                return {
+                                  ...d,
+                                  time: timeStr,
+                                  date: d.date || timestamp.toISOString(),
+                                  timestamp: timestampMs
+                                };
+                              });
+                              
+                              formattedData.sort((a: any, b: any) => {
+                                const timeA = typeof a.timestamp === 'number' ? a.timestamp : (a.timestamp ? new Date(a.timestamp).getTime() : new Date(a.date).getTime());
+                                const timeB = typeof b.timestamp === 'number' ? b.timestamp : (b.timestamp ? new Date(b.timestamp).getTime() : new Date(b.date).getTime());
+                                return timeA - timeB;
+                              });
+                              
+                              setChartData(formattedData);
+                              console.log(`[Chart] Chart reloaded with ${formattedData.length} data points for ${newHours} hours`);
+                            }
+                          })
+                          .catch((err) => {
+                            console.error('[Chart] Error reloading chart on decrease:', err);
+                          });
+                      }
+                    }}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
                     }}
                     disabled={chartHours <= 1}
                     className="h-8 w-8 px-2 text-sm border border-white/30 rounded-md bg-black/40 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-white font-bold cursor-pointer transition-all active:scale-95 relative z-10"
@@ -1498,11 +1579,91 @@ export default function Dashboard() {
                     {chartHours}h
                   </span>
                   <button
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
                       const newHours = Math.min(24, chartHours + 1);
-                      console.log(`[Chart] Button clicked! Increasing hours: ${chartHours} -> ${newHours}`);
+                      console.log(`[Chart] Increase button clicked! Changing hours: ${chartHours} -> ${newHours}`);
                       setUserManuallySetHours(true);
                       setChartHours(newHours);
+                      // Force immediate chart reload
+                      if (selectedStock?.symbol) {
+                        fetchIntradayData(selectedStock.symbol, newHours, 1000)
+                          .then((intradayData) => {
+                            if (intradayData && intradayData.length > 0) {
+                              const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                              const formattedData = intradayData.map((d: any) => {
+                                let timestamp: Date;
+                                let timestampMs: number;
+                                
+                                if (d.timestamp) {
+                                  if (typeof d.timestamp === 'number') {
+                                    timestampMs = d.timestamp;
+                                    timestamp = new Date(d.timestamp);
+                                  } else if (typeof d.timestamp === 'string') {
+                                    timestamp = new Date(d.timestamp);
+                                    timestampMs = timestamp.getTime();
+                                  } else {
+                                    timestamp = new Date();
+                                    timestampMs = timestamp.getTime();
+                                  }
+                                } else if (d.date) {
+                                  timestamp = new Date(d.date);
+                                  timestampMs = timestamp.getTime();
+                                } else {
+                                  timestamp = new Date();
+                                  timestampMs = timestamp.getTime();
+                                }
+                                
+                                if (isNaN(timestampMs)) {
+                                  timestamp = new Date();
+                                  timestampMs = timestamp.getTime();
+                                }
+                                
+                                let timeStr: string;
+                                if (newHours <= 1) {
+                                  timeStr = timestamp.toLocaleTimeString('en-US', { 
+                                    hour: '2-digit', 
+                                    minute: '2-digit',
+                                    second: '2-digit',
+                                    hour12: false,
+                                    timeZone: timeZone
+                                  });
+                                } else {
+                                  timeStr = timestamp.toLocaleTimeString('en-US', { 
+                                    hour: '2-digit', 
+                                    minute: '2-digit',
+                                    hour12: false,
+                                    timeZone: timeZone
+                                  });
+                                }
+                                
+                                return {
+                                  ...d,
+                                  time: timeStr,
+                                  date: d.date || timestamp.toISOString(),
+                                  timestamp: timestampMs
+                                };
+                              });
+                              
+                              formattedData.sort((a: any, b: any) => {
+                                const timeA = typeof a.timestamp === 'number' ? a.timestamp : (a.timestamp ? new Date(a.timestamp).getTime() : new Date(a.date).getTime());
+                                const timeB = typeof b.timestamp === 'number' ? b.timestamp : (b.timestamp ? new Date(b.timestamp).getTime() : new Date(b.date).getTime());
+                                return timeA - timeB;
+                              });
+                              
+                              setChartData(formattedData);
+                              console.log(`[Chart] Chart reloaded with ${formattedData.length} data points for ${newHours} hours`);
+                            }
+                          })
+                          .catch((err) => {
+                            console.error('[Chart] Error reloading chart on increase:', err);
+                          });
+                      }
+                    }}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
                     }}
                     disabled={chartHours >= 24}
                     className="h-8 w-8 px-2 text-sm border border-white/30 rounded-md bg-black/40 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-white font-bold cursor-pointer transition-all active:scale-95 relative z-10"
