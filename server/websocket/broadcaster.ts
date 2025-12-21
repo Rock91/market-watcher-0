@@ -187,24 +187,30 @@ export class PriceBroadcaster {
       // Note: changePercent is already a percentage value (e.g., -11.85 for -11.85%)
       const update: MarketMoversUpdateMessage = {
         type: 'market_movers_update',
-        gainers: gainers.map(g => ({
-          symbol: g.symbol,
-          name: g.name,
-          price: g.price,
-          change: `${(g.changePercent ?? g.change_percent ?? 0) >= 0 ? '+' : ''}${Number(g.changePercent ?? g.change_percent ?? 0).toFixed(2)}%`,
-          changePercent: Number(g.changePercent ?? g.change_percent ?? 0),
-          volume: g.volume ? `${(g.volume / 1000000).toFixed(1)}M` : undefined,
-          currency: g.currency || 'USD'
-        })),
-        losers: losers.map(l => ({
-          symbol: l.symbol,
-          name: l.name,
-          price: l.price,
-          change: `${(l.changePercent ?? l.change_percent ?? 0) >= 0 ? '+' : ''}${Number(l.changePercent ?? l.change_percent ?? 0).toFixed(2)}%`,
-          changePercent: Number(l.changePercent ?? l.change_percent ?? 0),
-          volume: l.volume ? `${(l.volume / 1000000).toFixed(1)}M` : undefined,
-          currency: l.currency || 'USD'
-        })),
+        gainers: gainers.map(g => {
+          const volume = g.volume || 0;
+          return {
+            symbol: g.symbol,
+            name: g.name,
+            price: g.price,
+            change: `${(g.changePercent ?? g.change_percent ?? 0) >= 0 ? '+' : ''}${Number(g.changePercent ?? g.change_percent ?? 0).toFixed(2)}%`,
+            changePercent: Number(g.changePercent ?? g.change_percent ?? 0),
+            volume: volume > 0 ? `${(volume / 1000000).toFixed(1)}M` : undefined,
+            currency: g.currency || 'USD'
+          };
+        }),
+        losers: losers.map(l => {
+          const volume = l.volume || 0;
+          return {
+            symbol: l.symbol,
+            name: l.name,
+            price: l.price,
+            change: `${(l.changePercent ?? l.change_percent ?? 0) >= 0 ? '+' : ''}${Number(l.changePercent ?? l.change_percent ?? 0).toFixed(2)}%`,
+            changePercent: Number(l.changePercent ?? l.change_percent ?? 0),
+            volume: volume > 0 ? `${(volume / 1000000).toFixed(1)}M` : undefined,
+            currency: l.currency || 'USD'
+          };
+        }),
         timestamp: Date.now()
       };
 

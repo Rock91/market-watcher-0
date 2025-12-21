@@ -199,6 +199,8 @@ export async function initializeClickHouse() {
           name String,
           price Float64,
           change_percent Float64,
+          volume UInt64,
+          currency LowCardinality(String),
           rank UInt32, -- position in the list (1-20)
           INDEX symbol_bf symbol TYPE bloom_filter GRANULARITY 1
         ) ENGINE = MergeTree()
@@ -427,6 +429,9 @@ export async function initializeClickHouse() {
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.stock_quotes MODIFY COLUMN currency LowCardinality(String)`);
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.market_movers MODIFY COLUMN type LowCardinality(String)`);
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.market_movers MODIFY COLUMN symbol LowCardinality(String)`);
+    // Add volume and currency columns if they don't exist (for backward compatibility)
+    await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.market_movers ADD COLUMN IF NOT EXISTS volume UInt64 DEFAULT 0`);
+    await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.market_movers ADD COLUMN IF NOT EXISTS currency LowCardinality(String) DEFAULT 'USD'`);
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.historical_data MODIFY COLUMN symbol LowCardinality(String)`);
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.trending_symbols MODIFY COLUMN symbol LowCardinality(String)`);
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.tracked_symbols MODIFY COLUMN symbol LowCardinality(String)`);
@@ -535,6 +540,8 @@ export async function storeMarketMovers(type: 'gainers' | 'losers', movers: any[
       name: mover.name,
       price: mover.price,
       change_percent: mover.changePercent,
+      volume: mover.volume || 0,
+      currency: mover.currency || 'USD',
       rank: index + 1
     }));
 

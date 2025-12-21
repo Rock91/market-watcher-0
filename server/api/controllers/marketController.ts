@@ -26,6 +26,7 @@ export async function getMarketMoversController(req: Request, res: Response) {
         const changePercent = mover.change_percent || 0;
         // Calculate absolute change from percentage and price
         const change = (mover.price * changePercent) / 100;
+        const volume = mover.volume || 0;
         return {
           symbol: mover.symbol,
           name: mover.name,
@@ -33,8 +34,9 @@ export async function getMarketMoversController(req: Request, res: Response) {
           change: change, // Absolute change amount
           changePercent: changePercent, // Percentage change
           changeFormatted: `${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%`,
-          vol: 'N/A', // Volume not stored in ClickHouse market_movers table
-          currency: 'USD'
+          vol: volume > 0 ? `${(volume / 1000000).toFixed(1)}M` : 'N/A',
+          volume: volume,
+          currency: mover.currency || 'USD'
         };
       });
       return res.json(transformedMovers);
