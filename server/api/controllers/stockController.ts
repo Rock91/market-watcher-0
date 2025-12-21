@@ -52,6 +52,7 @@ export async function getStockQuoteController(req: Request, res: Response) {
           peRatio: cachedQuote.pe_ratio,
           dayHigh: cachedQuote.day_high,
           dayLow: cachedQuote.day_low,
+          dayOpen: cachedQuote.day_open || 0,
           previousClose: cachedQuote.previous_close,
           currency: cachedQuote.currency || 'USD'
         });

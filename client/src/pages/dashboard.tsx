@@ -948,6 +948,40 @@ export default function Dashboard() {
           
           console.log(`[Chart] Loaded ${formattedData.length} data points, time range: ${formattedData[0]?.time} to ${formattedData[formattedData.length - 1]?.time}`);
           setChartData(formattedData);
+          
+          // If dayOpen is not available from API, calculate it from the first data point of the current day
+          if (selectedStock && (!selectedStock.dayOpen || selectedStock.dayOpen === 0) && formattedData.length > 0) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            
+            // Find the first data point for today
+            const todayDataPoints = formattedData.filter((d: any) => {
+              const dataTime = typeof d.timestamp === 'number' ? d.timestamp : (d.timestamp ? new Date(d.timestamp).getTime() : new Date(d.date).getTime());
+              const dataDate = new Date(dataTime);
+              dataDate.setHours(0, 0, 0, 0);
+              return dataDate.getTime() === today.getTime();
+            });
+            
+            if (todayDataPoints.length > 0) {
+              // Sort by timestamp and get the first (earliest) point
+              todayDataPoints.sort((a: any, b: any) => {
+                const timeA = typeof a.timestamp === 'number' ? a.timestamp : (a.timestamp ? new Date(a.timestamp).getTime() : new Date(a.date).getTime());
+                const timeB = typeof b.timestamp === 'number' ? b.timestamp : (b.timestamp ? new Date(b.timestamp).getTime() : new Date(b.date).getTime());
+                return timeA - timeB;
+              });
+              
+              const firstPrice = todayDataPoints[0]?.price;
+              if (firstPrice && firstPrice > 0) {
+                setSelectedStock(prev => prev ? { ...prev, dayOpen: firstPrice } : null);
+              }
+            } else if (formattedData.length > 0) {
+              // If no data for today, use the first data point in the chart as open
+              const firstPrice = formattedData[0]?.price;
+              if (firstPrice && firstPrice > 0) {
+                setSelectedStock(prev => prev ? { ...prev, dayOpen: firstPrice } : null);
+              }
+            }
+          }
         } else {
           // Fallback: try daily historical data if no intraday data
           console.log(`[Chart] No intraday data, trying daily historical data...`);
@@ -1489,6 +1523,11 @@ export default function Dashboard() {
                 </CardTitle>
                 <p className="text-muted-foreground text-xs font-rajdhani uppercase tracking-widest mt-1">
                   {selectedStock?.name || 'Loading...'} {selectedStock?.vol && `• VOL: ${selectedStock.vol}`}
+                  {selectedStock?.dayOpen && (
+                    <span className="ml-2 text-white/60">
+                      • Open: {selectedStock.currency ? `${selectedStock.currency} ` : '$'}{selectedStock.dayOpen.toFixed(2)}
+                    </span>
+                  )}
                 </p>
               </div>
               {/* Chart Zoom Controls and Stock Change - All on same line */}

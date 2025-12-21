@@ -17,6 +17,7 @@ export interface StockQuote {
   peRatio: number;
   dayHigh: number;
   dayLow: number;
+  dayOpen: number;
   previousClose: number;
   currency: string;
 }
@@ -58,6 +59,7 @@ export async function getStockQuote(symbol: string): Promise<StockQuote> {
       peRatio: quote.trailingPE || 0,
       dayHigh: quote.regularMarketDayHigh || 0,
       dayLow: quote.regularMarketDayLow || 0,
+      dayOpen: quote.regularMarketOpen || 0,
       previousClose: quote.regularMarketPreviousClose || 0,
       currency: quote.currency || 'USD'
     };

@@ -21,6 +21,7 @@ export async function initializeStockTables(): Promise<void> {
         pe_ratio Float64,
         day_high Float64,
         day_low Float64,
+        day_open Float64,
         previous_close Float64,
         currency LowCardinality(String),
         INDEX symbol_bf symbol TYPE bloom_filter GRANULARITY 1

@@ -179,6 +179,7 @@ export async function initializeClickHouse() {
           pe_ratio Float64,
           day_high Float64,
           day_low Float64,
+          day_open Float64,
           previous_close Float64,
           currency LowCardinality(String),
           INDEX symbol_bf symbol TYPE bloom_filter GRANULARITY 1
@@ -432,6 +433,8 @@ export async function initializeClickHouse() {
     // Add volume and currency columns if they don't exist (for backward compatibility)
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.market_movers ADD COLUMN IF NOT EXISTS volume UInt64 DEFAULT 0`);
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.market_movers ADD COLUMN IF NOT EXISTS currency LowCardinality(String) DEFAULT 'USD'`);
+    // Add day_open column if it doesn't exist (for backward compatibility)
+    await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.stock_quotes ADD COLUMN IF NOT EXISTS day_open Float64 DEFAULT 0`);
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.historical_data MODIFY COLUMN symbol LowCardinality(String)`);
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.trending_symbols MODIFY COLUMN symbol LowCardinality(String)`);
     await tryExec(`ALTER TABLE ${CLICKHOUSE_CONFIG.database}.tracked_symbols MODIFY COLUMN symbol LowCardinality(String)`);
@@ -511,6 +514,7 @@ export async function storeStockQuotes(quotes: any[], timestamp: Date = new Date
           pe_ratio: quote.peRatio || 0,
           day_high: quote.dayHigh || 0,
           day_low: quote.dayLow || 0,
+          day_open: quote.dayOpen || 0,
           previous_close: quote.previousClose || 0,
           currency: quote.currency || 'USD',
         })),
@@ -906,7 +910,7 @@ export async function getLatestStockQuote(symbol: string) {
     try {
       result = await clickhouseClient.query({
         query: `
-          SELECT timestamp, price, change, change_percent, volume, market_cap, pe_ratio, day_high, day_low, previous_close, currency
+          SELECT timestamp, price, change, change_percent, volume, market_cap, pe_ratio, day_high, day_low, day_open, previous_close, currency
           FROM ${tableName}
           ORDER BY timestamp DESC
           LIMIT 1
@@ -918,7 +922,7 @@ export async function getLatestStockQuote(symbol: string) {
       if (error?.message?.includes('does not exist') || error?.code === '60') {
         result = await clickhouseClient.query({
           query: `
-            SELECT timestamp, price, change, change_percent, volume, market_cap, pe_ratio, day_high, day_low, previous_close, currency
+            SELECT timestamp, price, change, change_percent, volume, market_cap, pe_ratio, day_high, day_low, day_open, previous_close, currency
             FROM ${CLICKHOUSE_CONFIG.database}.stock_quotes
             WHERE symbol = {symbol:String}
             ORDER BY timestamp DESC

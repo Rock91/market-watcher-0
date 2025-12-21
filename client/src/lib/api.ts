@@ -9,6 +9,9 @@ export interface StockQuote {
   vol: string;
   volume?: number;
   currency?: string;
+  dayOpen?: number;
+  dayHigh?: number;
+  dayLow?: number;
   previousClose?: number;
 }
 

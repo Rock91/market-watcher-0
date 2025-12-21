@@ -34,6 +34,7 @@ export async function ensureStockQuotesTable(symbol: string): Promise<void> {
           pe_ratio Float64,
           day_high Float64,
           day_low Float64,
+          day_open Float64,
           previous_close Float64,
           currency LowCardinality(String),
           INDEX timestamp_idx timestamp TYPE minmax GRANULARITY 3,
@@ -45,6 +46,14 @@ export async function ensureStockQuotesTable(symbol: string): Promise<void> {
         TTL timestamp + INTERVAL 1 YEAR
       `,
     });
+    // Add day_open column if it doesn't exist (for backward compatibility)
+    try {
+      await clickhouseClient.exec({
+        query: `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS day_open Float64 DEFAULT 0`,
+      });
+    } catch (e: any) {
+      // Ignore errors if column already exists
+    }
     createdTablesCache.add(cacheKey);
   } catch (error: any) {
     // If table already exists, add to cache anyway
