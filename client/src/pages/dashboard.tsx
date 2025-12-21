@@ -273,10 +273,17 @@ export default function Dashboard() {
                     return null;
                   }
                   const quote = await fetchStockQuote(symbolStr);
+                  // Ensure all required fields are properly set
                   return {
-                    ...quote,
+                    symbol: quote.symbol || symbolStr,
+                    name: quote.name || symbolStr,
+                    price: typeof quote.price === 'number' ? quote.price : 0,
+                    change: typeof quote.change === 'number' ? quote.change : (quote.price && quote.changePercent ? (quote.price * quote.changePercent) / 100 : 0),
+                    changePercent: typeof quote.changePercent === 'number' ? quote.changePercent : 0,
                     changeFormatted: formatChangePercent(quote.changePercent || 0),
-                    vol: quote.vol || `${(quote.volume || 0).toLocaleString()}`
+                    vol: quote.vol || `${(quote.volume || 0).toLocaleString()}`,
+                    volume: quote.volume || 0,
+                    currency: quote.currency || 'USD'
                   } as StockQuote;
                 } catch (err) {
                   console.warn(`Failed to fetch quote for trending symbol ${symbol}:`, err);
@@ -422,10 +429,17 @@ export default function Dashboard() {
               }
               
               const quote = await fetchStockQuote(symbolStr);
+              // Ensure all required fields are properly set
               return {
-                ...quote,
+                symbol: quote.symbol || symbolStr,
+                name: quote.name || symbolStr,
+                price: typeof quote.price === 'number' ? quote.price : 0,
+                change: typeof quote.change === 'number' ? quote.change : (quote.price && quote.changePercent ? (quote.price * quote.changePercent) / 100 : 0),
+                changePercent: typeof quote.changePercent === 'number' ? quote.changePercent : 0,
                 changeFormatted: formatChangePercent(quote.changePercent || 0),
-                vol: quote.vol || `${(quote.volume || 0).toLocaleString()}`
+                vol: quote.vol || `${(quote.volume || 0).toLocaleString()}`,
+                volume: quote.volume || 0,
+                currency: quote.currency || 'USD'
               } as StockQuote;
             } catch (err) {
               console.warn(`Failed to fetch quote for trending symbol:`, err);
