@@ -978,7 +978,11 @@ export default function Dashboard() {
     };
 
     const loadIndicators = async () => {
-      if (!selectedStock) return;
+      if (!selectedStock || !selectedStock.symbol) {
+        console.warn('[Indicators] No selected stock or symbol, skipping indicators load');
+        setIndicators(null);
+        return;
+      }
 
       try {
         setIndicatorsLoading(true);
@@ -1444,7 +1448,7 @@ export default function Dashboard() {
                   )}
                 </CardTitle>
                 <p className="text-muted-foreground text-xs font-rajdhani uppercase tracking-widest mt-1">
-                  {selectedStock?.name || 'Loading...'} // VOL: {selectedStock?.vol || 'N/A'}
+                  {selectedStock?.name || 'Loading...'} {selectedStock?.vol && `• VOL: ${selectedStock.vol}`}
                 </p>
               </div>
               {/* Chart Zoom Controls and Stock Change - All on same line */}
