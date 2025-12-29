@@ -16,6 +16,7 @@ import { log } from './utils/helpers';
 import { startDataFetcher } from './jobs/dataFetcher';
 import { startMarketDataSync } from './scripts/marketDataSync';
 import { startIndicatorsSync } from './scripts/technicalIndicatorsSync';
+import { startDataSync5min } from './scripts/dataSync5min';
 
 const app = express();
 const httpServer = createServer(app);
@@ -112,6 +113,18 @@ app.use(express.urlencoded({ extended: false }));
         .catch((error) => {
           console.warn(`[${new Date().toISOString()}] Technical indicators sync failed to start:`, error.message);
         });
+      
+      // Start 5-minute data sync service (optional - can also run standalone)
+      // Set ENABLE_5MIN_SYNC=true in .env to enable
+      if (process.env.ENABLE_5MIN_SYNC === 'true') {
+        startDataSync5min()
+          .then(() => {
+            log(`[${new Date().toISOString()}] 5-minute data sync service started`);
+          })
+          .catch((error) => {
+            console.warn(`[${new Date().toISOString()}] 5-minute data sync failed to start:`, error.message);
+          });
+      }
     })
     .catch((error) => {
       console.warn(`[${new Date().toISOString()}] ClickHouse initialization failed (server will continue without database):`, error.message);
@@ -135,6 +148,17 @@ app.use(express.urlencoded({ extended: false }));
         .catch((syncError) => {
           console.warn(`[${new Date().toISOString()}] Technical indicators sync failed to start:`, syncError.message);
         });
+      
+      // Try to start 5-minute data sync even if ClickHouse init failed
+      if (process.env.ENABLE_5MIN_SYNC === 'true') {
+        startDataSync5min()
+          .then(() => {
+            log(`[${new Date().toISOString()}] 5-minute data sync service started`);
+          })
+          .catch((syncError) => {
+            console.warn(`[${new Date().toISOString()}] 5-minute data sync failed to start:`, syncError.message);
+          });
+      }
     });
 
   // ALWAYS serve the app on the port specified in the environment variable PORT

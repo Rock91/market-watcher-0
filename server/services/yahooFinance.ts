@@ -163,3 +163,63 @@ export async function getHistoricalData(symbol: string, period1?: Date, period2?
     throw error;
   }
 }
+
+// Major forex currency pairs
+export const MAJOR_FOREX_PAIRS = [
+  'EURUSD=X', 'GBPUSD=X', 'USDJPY=X', 'USDCHF=X', 'AUDUSD=X',
+  'NZDUSD=X', 'USDCAD=X', 'EURGBP=X', 'EURJPY=X', 'GBPJPY=X',
+  'EURCHF=X', 'AUDJPY=X', 'EURAUD=X', 'EURCAD=X', 'GBPAUD=X',
+  'GBPCAD=X', 'GBPCHF=X', 'CHFJPY=X', 'AUDNZD=X', 'AUDCAD=X'
+];
+
+// Get forex quote (currency pair)
+export async function getForexQuote(symbol: string): Promise<StockQuote> {
+  // Ensure symbol has =X suffix for forex pairs
+  const symbolStr = symbol.endsWith('=X') ? symbol : `${symbol}=X`;
+  
+  try {
+    const quote: any = await yahooFinanceInstance.quote(symbolStr);
+
+    if (!quote) {
+      throw new Error(`No quote found for forex pair: ${symbol}`);
+    }
+
+    return {
+      symbol: quote.symbol,
+      name: quote.shortName || quote.longName || symbolStr,
+      price: quote.regularMarketPrice || 0,
+      change: quote.regularMarketChange || 0,
+      changePercent: quote.regularMarketChangePercent || 0,
+      volume: quote.regularMarketVolume || 0,
+      marketCap: 0, // Not applicable for forex
+      peRatio: 0, // Not applicable for forex
+      dayHigh: quote.regularMarketDayHigh || 0,
+      dayLow: quote.regularMarketDayLow || 0,
+      dayOpen: quote.regularMarketOpen || 0,
+      previousClose: quote.regularMarketPreviousClose || 0,
+      currency: quote.currency || 'USD'
+    };
+  } catch (error) {
+    console.error(`Error fetching forex quote for ${symbol}:`, error);
+    throw error;
+  }
+}
+
+// Get multiple forex quotes
+export async function getForexQuotes(symbols: string[]): Promise<StockQuote[]> {
+  const quotes: StockQuote[] = [];
+  
+  for (const symbol of symbols) {
+    try {
+      const quote = await getForexQuote(symbol);
+      quotes.push(quote);
+      // Small delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } catch (error) {
+      // Continue with other symbols even if one fails
+      console.warn(`Failed to fetch ${symbol}:`, error);
+    }
+  }
+  
+  return quotes;
+}

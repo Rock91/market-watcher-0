@@ -3,7 +3,9 @@ import {
   getMarketMoversController,
   getTrendingSymbolsController,
   getMarketMoversHistoryController,
-  getMarketStatusController
+  getMarketStatusController,
+  getAllMarketsStatusController,
+  getStocksFromOpenMarketsController
 } from '../controllers/marketController';
 
 const router = Router();
@@ -17,7 +19,13 @@ router.get('/trending', getTrendingSymbolsController);
 // Get historical market movers from ClickHouse
 router.get('/movers/history-clickhouse', getMarketMoversHistoryController);
 
-// Get market status (open/closed)
+// Get market status (open/closed) - supports optional ?market=US query param
 router.get('/status', getMarketStatusController);
+
+// Get all markets status
+router.get('/status/all', getAllMarketsStatusController);
+
+// Get stocks from markets that are currently open
+router.get('/open-markets/stocks', getStocksFromOpenMarketsController);
 
 export default router;

@@ -7,7 +7,7 @@ import {
   getLatestTrendingSymbols,
   storeTrendingSymbols
 } from '../../services/clickhouse';
-import { getMarketStatus } from '../../utils/helpers';
+import { getMarketStatus, getOpenMarkets, getAllMarketsStatus, MARKETS } from '../../utils/helpers';
 
 // Get market movers (gainers or losers)
 export async function getMarketMoversController(req: Request, res: Response) {
@@ -173,10 +173,191 @@ export async function getMarketMoversHistoryController(req: Request, res: Respon
 // Get market status (open/closed)
 export async function getMarketStatusController(req: Request, res: Response) {
   try {
-    const status = getMarketStatus();
+    const { market } = req.query;
+    const status = market ? getMarketStatus(market as string) : getMarketStatus();
     res.json(status);
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error getting market status:`, error);
     res.status(500).json({ error: 'Failed to get market status' });
+  }
+}
+
+// Get all markets status
+export async function getAllMarketsStatusController(req: Request, res: Response) {
+  try {
+    const allMarkets = getAllMarketsStatus();
+    res.json(allMarkets);
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error getting all markets status:`, error);
+    res.status(500).json({ error: 'Failed to get all markets status' });
+  }
+}
+
+// Get stocks from markets that are currently open
+export async function getStocksFromOpenMarketsController(req: Request, res: Response) {
+  try {
+    const { count = 20 } = req.query;
+    const countNum = parseInt(count as string);
+    
+    console.log(`[${new Date().toISOString()}] Fetching stocks from open markets, count: ${countNum}`);
+    
+    // Get list of open markets
+    const openMarkets = getOpenMarkets();
+    
+    if (openMarkets.length === 0) {
+      return res.json({
+        markets: [],
+        stocks: [],
+        message: 'No markets are currently open'
+      });
+    }
+    
+    // Map market codes to Yahoo Finance region codes
+    const marketRegionMap: Record<string, string> = {
+      'US': 'US',
+      'LONDON': 'GB',
+      'TOKYO': 'JP',
+      'HONG_KONG': 'HK',
+      'FRANKFURT': 'DE',
+      'SYDNEY': 'AU',
+      'INDIA': 'IN',
+      'FOREX': 'FX' // Forex doesn't use region codes
+    };
+    
+    // Fetch stocks from each open market
+    const stocksPromises = openMarkets.map(async (market) => {
+      try {
+        const region = marketRegionMap[market] || 'US';
+        const marketConfig = MARKETS[market];
+        
+        // Try to get trending symbols for the region
+        let stocks: any[] = [];
+        try {
+          const trendingResult = await yahooFinanceInstance.trendingSymbols(region, { count: countNum });
+          if (trendingResult?.quotes && trendingResult.quotes.length > 0) {
+            stocks = trendingResult.quotes.map((quote: any, index: number) => ({
+              symbol: quote.symbol,
+              name: quote.shortName || quote.longName || quote.symbol,
+              price: quote.regularMarketPrice || 0,
+              change: quote.regularMarketChange || 0,
+              changePercent: quote.regularMarketChangePercent || 0,
+              volume: quote.regularMarketVolume || 0,
+              currency: quote.currency || 'USD',
+              market: market,
+              marketName: marketConfig.name,
+              rank: index + 1
+            }));
+          }
+        } catch (error) {
+          console.warn(`[${new Date().toISOString()}] Failed to fetch trending symbols for ${market}, trying market movers...`);
+          
+          // Fallback to market movers (gainers) for US market
+          if (market === 'US') {
+            try {
+              const movers = await getMarketMovers('gainers', countNum);
+              stocks = movers.map((mover: any, index: number) => ({
+                symbol: mover.symbol,
+                name: mover.name,
+                price: mover.price,
+                change: (mover.price * mover.changePercent) / 100,
+                changePercent: mover.changePercent,
+                volume: mover.volume,
+                currency: mover.currency || 'USD',
+                market: market,
+                marketName: marketConfig.name,
+                rank: index + 1
+              }));
+            } catch (moverError) {
+              console.error(`[${new Date().toISOString()}] Failed to fetch market movers for ${market}:`, moverError);
+            }
+          }
+        }
+        
+        return {
+          market,
+          marketName: marketConfig.name,
+          timeZone: marketConfig.timeZone,
+          stocks
+        };
+      } catch (error) {
+        console.error(`[${new Date().toISOString()}] Error fetching stocks for market ${market}:`, error);
+        return {
+          market,
+          marketName: MARKETS[market]?.name || market,
+          timeZone: MARKETS[market]?.timeZone || '',
+          stocks: []
+        };
+      }
+    });
+    
+    const results = await Promise.all(stocksPromises);
+    
+    // Handle Forex market separately (if open)
+    if (openMarkets.includes('FOREX')) {
+      try {
+        const forexQuotes = await getForexQuotes(MAJOR_FOREX_PAIRS.slice(0, countNum));
+        const forexStocks = forexQuotes.map((quote: any, index: number) => ({
+          symbol: quote.symbol,
+          name: quote.name,
+          price: quote.price,
+          change: quote.change,
+          changePercent: quote.changePercent,
+          volume: quote.volume,
+          currency: quote.currency || 'USD',
+          market: 'FOREX',
+          marketName: 'Forex Market (24/5)',
+          rank: index + 1,
+          marketInfo: {
+            market: 'FOREX',
+            marketName: 'Forex Market (24/5)',
+            timeZone: 'UTC'
+          }
+        }));
+        
+        results.push({
+          market: 'FOREX',
+          marketName: 'Forex Market (24/5)',
+          timeZone: 'UTC',
+          stocks: forexStocks
+        });
+      } catch (error) {
+        console.error(`[${new Date().toISOString()}] Error fetching forex:`, error);
+      }
+    }
+    
+    // Flatten all stocks from all open markets
+    const allStocks = results.flatMap(result => 
+      result.stocks.map((stock: any) => ({
+        ...stock,
+        marketInfo: {
+          market: result.market,
+          marketName: result.marketName,
+          timeZone: result.timeZone
+        }
+      }))
+    );
+    
+    // Sort by changePercent (descending) to show biggest movers first
+    allStocks.sort((a, b) => (b.changePercent || 0) - (a.changePercent || 0));
+    
+    // Limit to requested count
+    const limitedStocks = allStocks.slice(0, countNum);
+    
+    console.log(`[${new Date().toISOString()}] Returning ${limitedStocks.length} stocks from ${openMarkets.length} open markets`);
+    
+    res.json({
+      markets: results.map(r => ({
+        market: r.market,
+        marketName: r.marketName,
+        timeZone: r.timeZone,
+        stockCount: r.stocks.length
+      })),
+      stocks: limitedStocks,
+      totalStocks: limitedStocks.length,
+      openMarkets: openMarkets.length
+    });
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error fetching stocks from open markets:`, error);
+    res.status(500).json({ error: 'Failed to fetch stocks from open markets' });
   }
 }

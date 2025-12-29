@@ -17,6 +17,8 @@ import {
   getMarketMovers, 
   getHistoricalData as fetchYahooHistoricalData,
   getStockQuote,
+  getForexQuotes,
+  MAJOR_FOREX_PAIRS,
   yahooFinanceInstance 
 } from '../services/yahooFinance';
 import {
@@ -25,13 +27,14 @@ import {
   storeMarketMovers,
   storeTrackedSymbolsFromMovers,
   storeHistoricalData,
+  storeTrendingSymbols,
   getHistoricalDataRange,
   getAllTrackedSymbols,
   getSymbolsNeedingBackfill,
   clickhouseClient,
 } from '../services/clickhouse';
 import { CLICKHOUSE_CONFIG } from '../config/database';
-import { isMarketOpen, getMarketStatus } from '../utils/helpers';
+import { isMarketOpen, getMarketStatus, getOpenMarkets, getAllMarketsStatus, MARKETS } from '../utils/helpers';
 
 // Configuration
 const CONFIG = {
@@ -68,43 +71,128 @@ function log(message: string) {
 }
 
 /**
- * Fetch and store market movers
+ * Map market codes to Yahoo Finance region codes
+ */
+const marketRegionMap: Record<string, string> = {
+  'US': 'US',
+  'LONDON': 'GB',
+  'TOKYO': 'JP',
+  'HONG_KONG': 'HK',
+  'FRANKFURT': 'DE',
+  'SYDNEY': 'AU',
+  'INDIA': 'IN',
+  'FOREX': 'FX' // Forex doesn't use region codes, but we'll use FX as identifier
+};
+
+/**
+ * Fetch and store market movers from all open markets
  * Returns the list of symbols from movers
  */
 async function fetchAllMarketMovers(): Promise<string[]> {
   const allSymbols: string[] = [];
+  const openMarkets = getOpenMarkets();
+  const allMarketsStatus = getAllMarketsStatus();
   
-  try {
-    log('Fetching market movers (gainers)...');
-    const gainers = await getMarketMovers('gainers', 50);
-    if (gainers.length > 0) {
-      await storeMarketMovers('gainers', gainers);
-      await storeTrackedSymbolsFromMovers('gainers', gainers, 'market_movers');
-      gainers.forEach(g => allSymbols.push(g.symbol));
-      log(`✓ Stored ${gainers.length} gainers in market_movers and tracked_symbols`);
-    } else {
-      log('No gainers found');
+  // Log status of all markets for debugging
+  log('Checking market status:');
+  allMarketsStatus.forEach(marketInfo => {
+    const status = marketInfo.isOpen ? 'OPEN' : 'CLOSED';
+    log(`  ${status}: ${marketInfo.name} (${marketInfo.currentTime} ${marketInfo.timeZone.split('/')[1]})`);
+  });
+  
+  if (openMarkets.length === 0) {
+    log('No markets are currently open');
+    return allSymbols;
+  }
+  
+  log(`Fetching market movers from ${openMarkets.length} open markets: ${openMarkets.join(', ')}`);
+  
+  // For US market, use the standard market movers API (gainers/losers)
+  if (openMarkets.includes('US')) {
+    try {
+      log('Fetching US market movers (gainers)...');
+      const gainers = await getMarketMovers('gainers', 50);
+      if (gainers.length > 0) {
+        await storeMarketMovers('gainers', gainers);
+        await storeTrackedSymbolsFromMovers('gainers', gainers, 'market_movers');
+        gainers.forEach(g => allSymbols.push(g.symbol));
+        log(`✓ Stored ${gainers.length} US gainers`);
+      }
+      
+      await sleep(CONFIG.API_DELAY_MS);
+      
+      log('Fetching US market movers (losers)...');
+      const losers = await getMarketMovers('losers', 50);
+      if (losers.length > 0) {
+        await storeMarketMovers('losers', losers);
+        await storeTrackedSymbolsFromMovers('losers', losers, 'market_movers');
+        losers.forEach(l => allSymbols.push(l.symbol));
+        log(`✓ Stored ${losers.length} US losers`);
+      }
+    } catch (error: any) {
+      console.error(`[${new Date().toISOString()}] [MarketSync] Error fetching US market movers:`, error.message);
     }
+  }
+  
+  // For other markets, fetch trending symbols as market movers
+  const otherMarkets = openMarkets.filter(m => m !== 'US');
+  if (otherMarkets.length > 0) {
+    log(`Processing ${otherMarkets.length} non-US markets: ${otherMarkets.join(', ')}`);
+  }
+  
+  for (const market of openMarkets) {
+    if (market === 'US') continue; // Already handled above
     
-    await sleep(CONFIG.API_DELAY_MS);
-    
-    log('Fetching market movers (losers)...');
-    const losers = await getMarketMovers('losers', 50);
-    if (losers.length > 0) {
-      await storeMarketMovers('losers', losers);
-      await storeTrackedSymbolsFromMovers('losers', losers, 'market_movers');
-      losers.forEach(l => allSymbols.push(l.symbol));
-      log(`✓ Stored ${losers.length} losers in market_movers and tracked_symbols`);
-    } else {
-      log('No losers found');
+    try {
+      const region = marketRegionMap[market] || 'US';
+      const marketConfig = MARKETS[market];
+      
+      if (!marketConfig) {
+        log(`⚠ Warning: Market config not found for ${market}, skipping...`);
+        continue;
+      }
+      
+      log(`Fetching trending symbols for ${marketConfig.name} (region: ${region})...`);
+      
+      const trendingResult = await yahooFinanceInstance.trendingSymbols(region, { count: 30 });
+      
+      if (trendingResult?.quotes && trendingResult.quotes.length > 0) {
+        // Store as trending symbols
+        await storeTrendingSymbols(trendingResult.quotes);
+        
+        // Also store as market movers (use 'gainers' type for trending)
+        const movers = trendingResult.quotes.map((quote: any) => ({
+          symbol: quote.symbol,
+          name: quote.shortName || quote.longName || quote.symbol,
+          price: quote.regularMarketPrice || 0,
+          changePercent: quote.regularMarketChangePercent || 0,
+          volume: quote.regularMarketVolume || 0,
+          currency: quote.currency || 'USD'
+        }));
+        
+        // Store as gainers (since we don't have separate gainers/losers for non-US markets)
+        await storeMarketMovers('gainers', movers);
+        await storeTrackedSymbolsFromMovers('gainers', movers, 'market_movers');
+        
+        movers.forEach(m => {
+          if (m.symbol) allSymbols.push(m.symbol);
+        });
+        
+        log(`✓ Stored ${movers.length} trending symbols from ${marketConfig.name}`);
+      } else {
+        log(`⚠ No trending symbols returned for ${marketConfig.name}`);
+      }
+      
+      await sleep(CONFIG.API_DELAY_MS);
+    } catch (error: any) {
+      console.error(`[${new Date().toISOString()}] [MarketSync] Error fetching trending for ${market}:`, error.message);
+      log(`✗ Failed to fetch data for ${market}: ${error.message}`);
     }
-  } catch (error: any) {
-    console.error(`[${new Date().toISOString()}] [MarketSync] Error fetching market movers:`, error.message);
   }
   
   // Remove duplicates
   const uniqueSymbols = Array.from(new Set(allSymbols));
-  log(`Total unique symbols from market movers: ${uniqueSymbols.length}`);
+  log(`Total unique symbols from all markets: ${uniqueSymbols.length}`);
   return uniqueSymbols;
 }
 
@@ -238,11 +326,24 @@ async function fetchQuotesForMovers(symbols: string[]): Promise<void> {
  * Main sync cycle
  */
 async function runSyncCycle(): Promise<void> {
+  const startTime = Date.now();
+  log('='.repeat(60));
   log('Starting sync cycle...');
   
-  // 1. Fetch all market movers
+  // Show which markets are open
+  const openMarkets = getOpenMarkets();
+  const allMarketsStatus = getAllMarketsStatus();
+  log(`Markets status: ${openMarkets.length} open, ${allMarketsStatus.length - openMarkets.length} closed`);
+  openMarkets.forEach(market => {
+    const marketInfo = allMarketsStatus.find(m => m.market === market);
+    if (marketInfo) {
+      log(`  ✓ ${marketInfo.name} (${marketInfo.currentTime} ${marketInfo.timeZone.split('/')[1]})`);
+    }
+  });
+  
+  // 1. Fetch all market movers from all open markets
   const moverSymbols = await fetchAllMarketMovers();
-  log(`Got ${moverSymbols.length} unique symbols from market movers`);
+  log(`Got ${moverSymbols.length} unique symbols from all open markets`);
   
   // 2. Fetch quotes for all movers
   if (moverSymbols.length > 0) {
@@ -254,7 +355,9 @@ async function runSyncCycle(): Promise<void> {
   await sleep(CONFIG.API_DELAY_MS);
   await backfillHistoricalData();
   
-  log('Sync cycle complete');
+  const duration = Date.now() - startTime;
+  log(`Sync cycle complete in ${(duration / 1000).toFixed(2)}s`);
+  log('='.repeat(60));
 }
 
 /**
@@ -272,23 +375,29 @@ export async function startMarketDataSync(): Promise<void> {
   // Initialize database
   await initializeClickHouse();
   
-  // Run initial sync (only if market is open)
-  if (isMarketOpen()) {
+  // Run initial sync (only if any market is open)
+  const openMarkets = getOpenMarkets();
+  if (openMarkets.length > 0) {
+    log(`Markets open: ${openMarkets.join(', ')}`);
     await runSyncCycle();
   } else {
-    const status = getMarketStatus();
-    log(`Market is closed: ${status.message}. Sync will start when market opens.`);
+    const allMarketsStatus = getAllMarketsStatus();
+    const closedMarkets = allMarketsStatus.filter(m => !m.isOpen);
+    log(`No markets are open. ${closedMarkets.length} markets are closed. Sync will start when markets open.`);
   }
   
-  // Schedule periodic market movers fetch (only when market is open)
+  // Schedule periodic market movers fetch (only when any market is open)
   setInterval(async () => {
     if (!isRunning) return;
     try {
-      if (isMarketOpen()) {
+      const openMarkets = getOpenMarkets();
+      if (openMarkets.length > 0) {
+        log(`Markets open: ${openMarkets.join(', ')}`);
         await fetchAllMarketMovers();
       } else {
-        const status = getMarketStatus();
-        log(`Market is closed: ${status.message}`);
+        const allMarketsStatus = getAllMarketsStatus();
+        const closedCount = allMarketsStatus.filter(m => !m.isOpen).length;
+        log(`No markets are open (${closedCount} markets closed)`);
       }
     } catch (error: any) {
       console.error(`[${new Date().toISOString()}] [MarketSync] Movers fetch error:`, error.message);
@@ -306,9 +415,10 @@ export async function startMarketDataSync(): Promise<void> {
   }, CONFIG.HISTORICAL_CHECK_INTERVAL_MS);
   
   log(`Sync scheduled:
-  - Market movers: every ${CONFIG.MOVERS_INTERVAL_MS / 1000}s
+  - Market movers: every ${CONFIG.MOVERS_INTERVAL_MS / 1000}s (from all open markets)
   - Historical backfill: every ${CONFIG.HISTORICAL_CHECK_INTERVAL_MS / 1000}s
-  - Backfill target: ${CONFIG.BACKFILL_DAYS} days`);
+  - Backfill target: ${CONFIG.BACKFILL_DAYS} days
+  - Supported markets: ${Object.keys(MARKETS).join(', ')}`);
 
   // Log current tracked symbols count and details
   try {
