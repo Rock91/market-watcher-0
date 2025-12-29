@@ -19,14 +19,14 @@ export const CLICKHOUSE_CONFIG = USE_ENV_DB ? {
   host: process.env.CLICKHOUSE_HOST || 'localhost',
   port: process.env.CLICKHOUSE_PORT || '8123',
   username: process.env.CLICKHOUSE_USERNAME || 'default',
-  password: stripQuotes(process.env.CLICKHOUSE_PASSWORD),
+  password: stripQuotes(process.env.CLICKHOUSE_PASSWORD) || '1703',
   database: process.env.CLICKHOUSE_DATABASE || 'market_data',
 } : {
   // Local database configuration (default)
   host: 'localhost',
   port: '8123',
   username: 'default',
-  password: '',
+  password: process.env.CLICKHOUSE_PASSWORD || '1703', // Allow password from env even in local mode
   database: 'market_data',
 };
 

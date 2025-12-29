@@ -18,6 +18,10 @@
     "sync:5min:once": "tsx server/scripts/dataSync5min.ts --once",
     "ai:trading": "tsx server/scripts/aiTradingSystem.ts",
     "ai:trading:once": "tsx server/scripts/aiTradingSystem.ts --once",
+    "sync:all": "tsx server/scripts/runAll.ts",
+    "sync:all:once": "tsx server/scripts/runAll.ts --once",
+    "sync:historical": "tsx server/scripts/historicalDataSync.ts",
+    "sync:historical:once": "tsx server/scripts/historicalDataSync.ts --once",
     "migrate:clickhouse": "tsx server/scripts/migrateClickHouse.ts",
     "migrate:per-stock": "tsx server/scripts/migrateToPerStockTables.ts"
   },
