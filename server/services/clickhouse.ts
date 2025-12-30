@@ -805,9 +805,20 @@ export async function storeHistoricalData(symbol: string, data: any[]) {
     });
 
     console.log(`[${new Date().toISOString()}] Stored ${data.length} historical records for ${symbol}`);
-  } catch (error) {
-    // Silently fail if ClickHouse is not available
-    return;
+  } catch (error: any) {
+    // Log error instead of silently failing - helps diagnose issues
+    const errorMsg = error?.message || String(error);
+    const errorCode = (error as any)?.code;
+    
+    // Only silently fail if it's a connection issue
+    if (errorMsg.includes('socket hang up') || errorMsg.includes('ECONNREFUSED') || errorMsg.includes('timeout')) {
+      console.warn(`[${new Date().toISOString()}] ClickHouse not available, skipping historical data storage for ${symbol}`);
+      return;
+    }
+    
+    // Log other errors for debugging
+    console.error(`[${new Date().toISOString()}] Error storing historical data for ${symbol}:`, errorMsg, errorCode);
+    throw error; // Re-throw to let caller know storage failed
   }
 }
 
@@ -849,9 +860,21 @@ export async function getHistoricalData(symbol: string, days: number = 30) {
       }
     }
 
-    return result.json();
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] Error querying historical data for ${symbol}:`, error);
+    const data = await result.json();
+    console.log(`[${new Date().toISOString()}] Retrieved ${data.length} historical records for ${symbol} from ClickHouse`);
+    return data;
+  } catch (error: any) {
+    const errorMsg = error?.message || String(error);
+    const errorCode = (error as any)?.code;
+    
+    // Log detailed error information
+    if (errorMsg.includes('does not exist') || errorCode === '60') {
+      console.warn(`[${new Date().toISOString()}] Historical data table for ${symbol} does not exist yet. No data available.`);
+    } else if (errorMsg.includes('ECONNREFUSED') || errorMsg.includes('socket hang up')) {
+      console.warn(`[${new Date().toISOString()}] ClickHouse not available, cannot retrieve historical data for ${symbol}`);
+    } else {
+      console.error(`[${new Date().toISOString()}] Error querying historical data for ${symbol}:`, errorMsg, errorCode);
+    }
     return [];
   }
 }

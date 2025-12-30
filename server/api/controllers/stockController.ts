@@ -160,10 +160,18 @@ export async function getHistoricalDataController(req: Request, res: Response) {
 
     // Store in database for future requests
     if (history && history.length > 0) {
-      await storeHistoricalData(symbol, history).catch(err => {
-        // Don't fail the request if storage fails
-        console.warn(`[${new Date().toISOString()}] Failed to store historical data for ${symbol}:`, err);
-      });
+      try {
+        await storeHistoricalData(symbol, history);
+        console.log(`[${new Date().toISOString()}] Successfully stored ${history.length} historical records for ${symbol} in ClickHouse`);
+      } catch (err: any) {
+        // Don't fail the request if storage fails, but log the error
+        const errorMsg = err?.message || String(err);
+        console.warn(`[${new Date().toISOString()}] Failed to store historical data for ${symbol} in ClickHouse:`, errorMsg);
+        // Check if it's a connection issue
+        if (errorMsg.includes('ECONNREFUSED') || errorMsg.includes('socket hang up')) {
+          console.warn(`[${new Date().toISOString()}] ClickHouse appears to be unavailable. Historical data will not be cached.`);
+        }
+      }
     }
 
     // Format the response for the chart
