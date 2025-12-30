@@ -75,6 +75,7 @@ async function ensureStockQuotesTable(symbol: string): Promise<void> {
           pe_ratio Float64,
           day_high Float64,
           day_low Float64,
+          day_open Float64,
           previous_close Float64,
           currency LowCardinality(String),
           INDEX timestamp_idx timestamp TYPE minmax GRANULARITY 3,
@@ -86,6 +87,19 @@ async function ensureStockQuotesTable(symbol: string): Promise<void> {
         TTL timestamp + INTERVAL 1 YEAR
       `,
     });
+    
+    // Add day_open column to existing tables if it doesn't exist (migration)
+    try {
+      await clickhouseClient.exec({
+        query: `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS day_open Float64 DEFAULT 0`,
+      });
+    } catch (migrationError: any) {
+      // Ignore errors if column already exists or table doesn't exist
+      if (!migrationError?.message?.includes('already exists') && !migrationError?.message?.includes('does not exist')) {
+        console.warn(`[${new Date().toISOString()}] Could not add day_open column to ${tableName}:`, migrationError?.message);
+      }
+    }
+    
     createdTablesCache.add(cacheKey);
   } catch (error: any) {
     // If table already exists, add to cache anyway
@@ -943,6 +957,7 @@ export async function getLatestStockQuote(symbol: string) {
     // Check if table exists, if not try the old shared table
     let result;
     try {
+      // Try with day_open first
       result = await clickhouseClient.query({
         query: `
           SELECT timestamp, price, change, change_percent, volume, market_cap, pe_ratio, day_high, day_low, day_open, previous_close, currency
@@ -953,8 +968,43 @@ export async function getLatestStockQuote(symbol: string) {
         format: 'JSONEachRow',
       });
     } catch (error: any) {
-      // If per-stock table doesn't exist, try old shared table for backward compatibility
-      if (error?.message?.includes('does not exist') || error?.code === '60') {
+      // If error is about day_open column missing, try without it
+      if (error?.message?.includes('day_open') || error?.code === '47') {
+        try {
+          result = await clickhouseClient.query({
+            query: `
+              SELECT timestamp, price, change, change_percent, volume, market_cap, pe_ratio, day_high, day_low, previous_close, currency
+              FROM ${tableName}
+              ORDER BY timestamp DESC
+              LIMIT 1
+            `,
+            format: 'JSONEachRow',
+          });
+          // Add day_open as 0 for backward compatibility
+          const data: any = await result.json();
+          if (data.length > 0) {
+            data[0].day_open = 0;
+          }
+        } catch (fallbackError: any) {
+          // If per-stock table doesn't exist, try old shared table
+          if (fallbackError?.message?.includes('does not exist') || fallbackError?.code === '60') {
+            result = await clickhouseClient.query({
+              query: `
+                SELECT timestamp, price, change, change_percent, volume, market_cap, pe_ratio, day_high, day_low, day_open, previous_close, currency
+                FROM ${CLICKHOUSE_CONFIG.database}.stock_quotes
+                WHERE symbol = {symbol:String}
+                ORDER BY timestamp DESC
+                LIMIT 1
+              `,
+              query_params: { symbol },
+              format: 'JSONEachRow',
+            });
+          } else {
+            throw fallbackError;
+          }
+        }
+      } else if (error?.message?.includes('does not exist') || error?.code === '60') {
+        // If per-stock table doesn't exist, try old shared table for backward compatibility
         result = await clickhouseClient.query({
           query: `
             SELECT timestamp, price, change, change_percent, volume, market_cap, pe_ratio, day_high, day_low, day_open, previous_close, currency

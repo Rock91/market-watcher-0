@@ -174,7 +174,7 @@ async function fetchAllMarketMovers(): Promise<string[]> {
         await storeMarketMovers('gainers', movers);
         await storeTrackedSymbolsFromMovers('gainers', movers, 'market_movers');
         
-        movers.forEach(m => {
+        movers.forEach((m: any) => {
           if (m.symbol) allSymbols.push(m.symbol);
         });
         

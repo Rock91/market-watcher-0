@@ -10,7 +10,7 @@ import {
   getStockQuote, 
   getMarketMovers, 
   getHistoricalData as fetchYahooHistoricalData,
-  yahooFinanceInstance 
+  getTrendingSymbols
 } from '../services/yahooFinance';
 import {
   storeStockQuote,
@@ -164,7 +164,7 @@ async function fetchAndStoreTrending() {
   console.log(`[${new Date().toISOString()}] [DataFetcher] Fetching trending symbols...`);
 
   try {
-    const trending = await yahooFinanceInstance.trendingSymbols('US', { count: 20 });
+    const trending = await getTrendingSymbols('US', 20);
     
     if (trending?.quotes && trending.quotes.length > 0) {
       await storeTrendingSymbols(trending.quotes);

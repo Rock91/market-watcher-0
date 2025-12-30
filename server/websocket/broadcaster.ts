@@ -6,7 +6,7 @@ import {
   AISignalMessage,
   WebSocketEventType
 } from './types';
-import { getStockQuote, getMarketMovers, yahooFinanceInstance } from '../services/yahooFinance';
+import { getStockQuote, getMarketMovers, getTrendingSymbols } from '../services/yahooFinance';
 import { 
   storeStockQuotes, 
   getLatestMarketMovers, 
@@ -331,7 +331,7 @@ export class PriceBroadcaster {
 
       // Fallback to Yahoo Finance if DB has no recent snapshot
       if (!symbols || symbols.length === 0) {
-        const trending = await yahooFinanceInstance.trendingSymbols('US', { count: 20 });
+        const trending = await getTrendingSymbols('US', 20);
         if (trending?.quotes && trending.quotes.length > 0) {
           symbols = trending.quotes.map((quote: any, index: number) => ({
             symbol: quote.symbol,
