@@ -27,6 +27,14 @@ function dateToClickHouseDateTime(date: Date): string {
   return date.toISOString().replace('T', ' ').replace('Z', '').substring(0, 19);
 }
 
+/**
+ * Convert JavaScript Date to ClickHouse Date string format
+ * ClickHouse Date expects: 'YYYY-MM-DD'
+ */
+function dateToClickHouseDate(date: Date): string {
+  return date.toISOString().substring(0, 10);
+}
+
 // Sanitize symbol name for use in table name (ClickHouse table names must be valid identifiers)
 function sanitizeTableName(symbol: string): string {
   // Replace invalid characters with underscore, ensure it starts with a letter or number
@@ -776,15 +784,19 @@ export async function storeHistoricalData(symbol: string, data: any[]) {
 
     await ensureHistoricalDataTable(symbol);
 
-    const values = data.map((item: any) => ({
-      date: new Date(item.date),
-      open: item.open || 0,
-      high: item.high || 0,
-      low: item.low || 0,
-      close: item.close || 0,
-      volume: item.volume || 0,
-      adj_close: item.adjClose || item.close || 0,
-    }));
+    const values = data.map((item: any) => {
+      const dateValue = item.date || item.time || item.timestamp;
+      const dateObj = dateValue instanceof Date ? dateValue : new Date(dateValue);
+      return {
+        date: dateToClickHouseDate(dateObj),
+        open: item.open || 0,
+        high: item.high || 0,
+        low: item.low || 0,
+        close: item.close || 0,
+        volume: item.volume || 0,
+        adj_close: item.adjClose || item.close || 0,
+      };
+    });
 
     await clickhouseClient.insert({
       table: getHistoricalDataTableName(symbol),
@@ -1339,7 +1351,7 @@ export async function storeTechnicalIndicators(indicators: TechnicalIndicatorDat
     if (!indicators || indicators.length === 0) return;
 
     const values = indicators.map((indicator) => ({
-      date: indicator.date,
+      date: dateToClickHouseDate(indicator.date instanceof Date ? indicator.date : new Date(indicator.date)),
       symbol: indicator.symbol,
       rsi: indicator.rsi,
       macd_value: indicator.macdValue,
