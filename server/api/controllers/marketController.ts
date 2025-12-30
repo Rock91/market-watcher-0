@@ -278,8 +278,6 @@ export async function getStocksFromOpenMarketsController(req: Request, res: Resp
           }
           
           if (trendingResult?.quotes && trendingResult.quotes.length > 0) {
-          
-          if (trendingResult?.quotes && trendingResult.quotes.length > 0) {
             stocks = trendingResult.quotes.map((quote: any, index: number) => ({
               symbol: quote.symbol,
               name: quote.shortName || quote.longName || quote.symbol,
