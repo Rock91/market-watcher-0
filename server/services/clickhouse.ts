@@ -980,11 +980,13 @@ export async function getLatestStockQuote(symbol: string) {
             `,
             format: 'JSONEachRow',
           });
-          // Add day_open as 0 for backward compatibility
+          // Read the result immediately and add day_open
           const data: any = await result.json();
           if (data.length > 0) {
             data[0].day_open = 0;
+            return { ...data[0], symbol }; // Return early to avoid reading stream again
           }
+          return null;
         } catch (fallbackError: any) {
           // If per-stock table doesn't exist, try old shared table
           if (fallbackError?.message?.includes('does not exist') || fallbackError?.code === '60') {
@@ -1021,6 +1023,7 @@ export async function getLatestStockQuote(symbol: string) {
       }
     }
 
+    // Read the result stream only once
     const data: any = await result.json();
     if (data.length > 0) {
       return { ...data[0], symbol }; // Add symbol for compatibility
