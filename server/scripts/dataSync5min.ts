@@ -19,7 +19,7 @@ import {
   getStockQuote,
   getForexQuotes,
   MAJOR_FOREX_PAIRS,
-  yahooFinanceInstance 
+  getTrendingSymbols
 } from '../services/yahooFinance';
 import {
   initializeClickHouse,

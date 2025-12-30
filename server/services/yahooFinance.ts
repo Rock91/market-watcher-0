@@ -123,8 +123,30 @@ export type Interval = '1d' | '1wk' | '1mo';
 
 export async function getHistoricalData(symbol: string, period1?: Date, period2?: Date, interval: string = '1d') {
   // Ensure dates are valid - default to 30 days of history for daily data
-  const startDate = period1 || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30 days ago
-  const endDate = period2 || new Date();
+  const now = new Date();
+  let startDate = period1 || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30 days ago
+  let endDate = period2 || new Date(now);
+  
+  // Validate dates
+  if (startDate >= endDate) {
+    throw new Error(`Invalid date range: startDate (${startDate.toISOString()}) must be before endDate (${endDate.toISOString()})`);
+  }
+  
+  if (startDate > now) {
+    console.warn(`[Yahoo Finance] Start date is in the future, adjusting to 30 days ago`);
+    startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  }
+  
+  if (endDate > now) {
+    console.warn(`[Yahoo Finance] End date is in the future, adjusting to now`);
+    endDate = new Date(now);
+  }
+  
+  // Ensure startDate is still before endDate after adjustments
+  if (startDate >= endDate) {
+    startDate = new Date(endDate);
+    startDate.setDate(startDate.getDate() - 30);
+  }
   
   // yahoo-finance2 historical only supports: '1d', '1wk', '1mo'
   // Map any unsupported intervals to '1d'
@@ -149,11 +171,17 @@ export async function getHistoricalData(symbol: string, period1?: Date, period2?
     const errorMessage = error?.message || String(error);
     const isDelistedError = errorMessage.includes('No data found') || 
                            errorMessage.includes('delisted') ||
-                           errorMessage.includes('not found');
+                           errorMessage.includes('not found') ||
+                           errorMessage.includes("Data doesn't exist");
     
-    if (isDelistedError) {
-      // Log as warning (not error) for delisted symbols - this is expected
-      console.warn(`[Yahoo Finance] No historical data available for ${symbol} (may be delisted or unavailable)`);
+    // Check for invalid date range errors
+    const isDateRangeError = errorMessage.includes("Data doesn't exist for startDate") ||
+                             errorMessage.includes('Invalid date range') ||
+                             errorMessage.includes('startDate') && errorMessage.includes('endDate');
+    
+    if (isDelistedError || isDateRangeError) {
+      // Log as warning (not error) for delisted symbols or invalid date ranges - these are expected
+      console.warn(`[Yahoo Finance] No historical data available for ${symbol} (may be delisted, unavailable, or date range invalid): ${errorMessage}`);
       // Return empty array instead of throwing - let the controller handle fallback
       return [];
     }
@@ -222,4 +250,66 @@ export async function getForexQuotes(symbols: string[]): Promise<StockQuote[]> {
   }
   
   return quotes;
+}
+
+// Get trending symbols with robust error handling for schema validation issues
+export async function getTrendingSymbols(region: string, count: number = 20): Promise<any> {
+  try {
+    // Try with validation disabled first
+    const result: any = await yahooFinanceInstance.trendingSymbols(
+      region, 
+      { count }, 
+      { validateResult: false } as any
+    );
+    
+    // Check if result has the expected structure
+    if (result && (result.quotes || result.count !== undefined)) {
+      return result;
+    }
+    
+    // If result structure is unexpected, try to extract data anyway
+    return result;
+  } catch (error: any) {
+    // Handle all types of validation errors
+    const errorName = error?.name || error?.constructor?.name || '';
+    const errorMessage = error?.message || String(error) || '';
+    
+    // Check for various validation error patterns
+    const isValidationError = 
+      errorName.includes('FailedYahooValidationError') ||
+      errorName.includes('ValidationError') ||
+      errorName.includes('YahooValidationError') ||
+      errorMessage.includes('Failed Yahoo Schema validation') ||
+      errorMessage.includes('Expected an object') ||
+      errorMessage.includes('schemaPath') ||
+      errorMessage.includes('TrendingSymbolsResult') ||
+      error?.schemaPath !== undefined ||
+      error?.schema !== undefined;
+    
+    // If it's a validation error, try to extract data from error.result
+    if (isValidationError) {
+      // Check multiple possible locations for the result data
+      const resultData = error?.result || error?.data || error;
+      
+      // If we have quotes in the result, return it
+      if (resultData && (resultData.quotes || resultData.count !== undefined)) {
+        console.warn(`[Yahoo Finance] Schema validation failed for trending symbols (${region}), but extracted data from error result`);
+        return resultData;
+      }
+      
+      // If we have a result object but no quotes, try to construct a valid response
+      if (resultData && typeof resultData === 'object') {
+        // Sometimes the data is nested differently
+        const quotes = resultData.quotes || resultData.data || [];
+        if (Array.isArray(quotes) && quotes.length > 0) {
+          console.warn(`[Yahoo Finance] Schema validation failed for trending symbols (${region}), but extracted quotes from error result`);
+          return { quotes, count: quotes.length };
+        }
+      }
+    }
+    
+    // For non-validation errors or if we can't extract data, log and re-throw
+    console.error(`[Yahoo Finance] Error fetching trending symbols for ${region}:`, errorMessage);
+    throw error;
+  }
 }
