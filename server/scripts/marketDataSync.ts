@@ -19,7 +19,7 @@ import {
   getStockQuote,
   getForexQuotes,
   MAJOR_FOREX_PAIRS,
-  yahooFinanceInstance 
+  getTrendingSymbols
 } from '../services/yahooFinance';
 import {
   initializeClickHouse,
@@ -154,28 +154,7 @@ async function fetchAllMarketMovers(): Promise<string[]> {
       
       log(`Fetching trending symbols for ${marketConfig.name} (region: ${region})...`);
       
-      let trendingResult: any = null;
-      
-      try {
-        // Try with validation disabled for regions that may have schema issues
-        trendingResult = await yahooFinanceInstance.trendingSymbols(region, { count: 30 }, { validateResult: false } as any);
-      } catch (validationErr: any) {
-        // Handle validation errors - data might still be available in error.result
-        const errorName = validationErr?.name || validationErr?.constructor?.name || '';
-        const isValidationError = errorName.includes('FailedYahooValidationError') || 
-                                  errorName.includes('ValidationError') ||
-                                  validationErr?.message?.includes('Failed Yahoo Schema validation') ||
-                                  validationErr?.message?.includes('Expected an object');
-        
-        if (isValidationError && validationErr?.result) {
-          // Extract data from validation error - data is valid, just schema validation failed
-          log(`⚠ Schema validation failed for ${marketConfig.name}, but extracting data from error result`);
-          trendingResult = validationErr.result;
-        } else {
-          // Re-throw if it's not a validation error
-          throw validationErr;
-        }
-      }
+      const trendingResult = await getTrendingSymbols(region, 30);
       
       if (trendingResult?.quotes && trendingResult.quotes.length > 0) {
         // Store as trending symbols
@@ -226,29 +205,58 @@ async function fetchHistoricalForSymbol(symbol: string): Promise<boolean> {
     // Check existing data range
     const existingRange = await getHistoricalDataRange(symbol);
     
-    const endDate = new Date();
-    let startDate = new Date();
+    const now = new Date();
+    const endDate = new Date(now);
+    let startDate = new Date(now);
     startDate.setDate(endDate.getDate() - CONFIG.BACKFILL_DAYS);
+    
+    // Validate dates - ensure startDate is before endDate and not in the future
+    if (startDate >= endDate) {
+      log(`${symbol}: Invalid date range (startDate >= endDate), skipping`);
+      return false;
+    }
+    
+    if (startDate > now) {
+      log(`${symbol}: Start date is in the future, adjusting to ${CONFIG.BACKFILL_DAYS} days ago`);
+      startDate = new Date(now);
+      startDate.setDate(startDate.getDate() - CONFIG.BACKFILL_DAYS);
+    }
     
     // If we have some data, only fetch what's missing
     if (existingRange.count > 0 && existingRange.minDate) {
       // Check if we need older data
-      const oneYearAgo = new Date();
-      oneYearAgo.setDate(oneYearAgo.getDate() - CONFIG.BACKFILL_DAYS);
+      const targetDate = new Date(now);
+      targetDate.setDate(targetDate.getDate() - CONFIG.BACKFILL_DAYS);
       
-      if (existingRange.minDate <= oneYearAgo) {
+      if (existingRange.minDate <= targetDate) {
         // We have enough historical data
         log(`${symbol}: Already has ${existingRange.count} records from ${existingRange.minDate.toDateString()}`);
         return true;
       }
       
-      // Need to fetch older data - from 1 year ago to earliest existing date
-      endDate.setTime(existingRange.minDate.getTime());
-      endDate.setDate(endDate.getDate() - 1); // Day before earliest existing
+      // Need to fetch older data - from target date to earliest existing date
+      const newEndDate = new Date(existingRange.minDate);
+      newEndDate.setDate(newEndDate.getDate() - 1); // Day before earliest existing
+      const newStartDate = new Date(targetDate);
       
-      log(`${symbol}: Has data from ${existingRange.minDate.toDateString()}, fetching older data...`);
+      // Validate the date range
+      if (newStartDate >= newEndDate || newStartDate > now || newEndDate > now) {
+        log(`${symbol}: Invalid date range for backfill (${newStartDate.toDateString()} to ${newEndDate.toDateString()}), skipping`);
+        return false;
+      }
+      
+      startDate = newStartDate;
+      endDate.setTime(newEndDate.getTime());
+      
+      log(`${symbol}: Has data from ${existingRange.minDate.toDateString()}, fetching older data from ${startDate.toDateString()} to ${endDate.toDateString()}...`);
     } else {
-      log(`${symbol}: No historical data found, fetching ${CONFIG.BACKFILL_DAYS} days...`);
+      log(`${symbol}: No historical data found, fetching ${CONFIG.BACKFILL_DAYS} days from ${startDate.toDateString()} to ${endDate.toDateString()}...`);
+    }
+    
+    // Final validation before API call
+    if (startDate >= endDate || startDate > now || endDate > now) {
+      log(`${symbol}: Invalid final date range (${startDate.toDateString()} to ${endDate.toDateString()}), skipping`);
+      return false;
     }
     
     // Fetch historical data from Yahoo Finance
