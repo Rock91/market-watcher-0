@@ -126,7 +126,28 @@ async function fetchMarketMoversFromOpenMarkets(): Promise<string[]> {
       
       log(`Fetching trending symbols for ${marketConfig.name}...`);
       
-      const trendingResult = await yahooFinanceInstance.trendingSymbols(region, { count: 20 });
+      let trendingResult: any = null;
+      
+      try {
+        // Try with validation disabled for regions that may have schema issues
+        trendingResult = await yahooFinanceInstance.trendingSymbols(region, { count: 20 }, { validateResult: false } as any);
+      } catch (validationErr: any) {
+        // Handle validation errors - data might still be available in error.result
+        const errorName = validationErr?.name || validationErr?.constructor?.name || '';
+        const isValidationError = errorName.includes('FailedYahooValidationError') || 
+                                  errorName.includes('ValidationError') ||
+                                  validationErr?.message?.includes('Failed Yahoo Schema validation') ||
+                                  validationErr?.message?.includes('Expected an object');
+        
+        if (isValidationError && validationErr?.result) {
+          // Extract data from validation error - data is valid, just schema validation failed
+          log(`⚠ Schema validation failed for ${marketConfig.name}, but extracting data from error result`);
+          trendingResult = validationErr.result;
+        } else {
+          // Re-throw if it's not a validation error
+          throw validationErr;
+        }
+      }
       
       if (trendingResult?.quotes && trendingResult.quotes.length > 0) {
         // Store as trending symbols
@@ -175,7 +196,28 @@ async function fetchTrendingFromOpenMarkets(): Promise<void> {
       
       log(`Fetching trending symbols for ${marketConfig.name}...`);
       
-      const trendingResult = await yahooFinanceInstance.trendingSymbols(region, { count: 20 });
+      let trendingResult: any = null;
+      
+      try {
+        // Try with validation disabled for regions that may have schema issues
+        trendingResult = await yahooFinanceInstance.trendingSymbols(region, { count: 20 }, { validateResult: false } as any);
+      } catch (validationErr: any) {
+        // Handle validation errors - data might still be available in error.result
+        const errorName = validationErr?.name || validationErr?.constructor?.name || '';
+        const isValidationError = errorName.includes('FailedYahooValidationError') || 
+                                  errorName.includes('ValidationError') ||
+                                  validationErr?.message?.includes('Failed Yahoo Schema validation') ||
+                                  validationErr?.message?.includes('Expected an object');
+        
+        if (isValidationError && validationErr?.result) {
+          // Extract data from validation error - data is valid, just schema validation failed
+          log(`⚠ Schema validation failed for ${marketConfig.name}, but extracting data from error result`);
+          trendingResult = validationErr.result;
+        } else {
+          // Re-throw if it's not a validation error
+          throw validationErr;
+        }
+      }
       
       if (trendingResult?.quotes && trendingResult.quotes.length > 0) {
         await storeTrendingSymbols(trendingResult.quotes);

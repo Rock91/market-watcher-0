@@ -23,9 +23,12 @@ import {
 } from '../services/clickhouse';
 import { 
   getHistoricalData as fetchYahooHistoricalData, 
-  getMarketMovers as fetchMarketMovers 
+  getMarketMovers as fetchMarketMovers,
+  getForexQuotes,
+  MAJOR_FOREX_PAIRS,
+  yahooFinanceInstance 
 } from '../services/yahooFinance';
-import { isMarketOpen, getMarketStatus } from '../utils/helpers';
+import { isMarketOpen, getMarketStatus, getOpenMarkets, getAllMarketsStatus, MARKETS } from '../utils/helpers';
 
 // Configuration
 const CONFIG = {
@@ -175,72 +178,220 @@ async function syncHistoricalData(): Promise<void> {
 }
 
 /**
- * Fetch top 20 market movers (only when market is closed)
+ * Map market codes to Yahoo Finance region codes
  */
-async function fetchMarketMoversWhenClosed(): Promise<void> {
-  const marketStatus = getMarketStatus('US');
-  
-  if (marketStatus.isOpen) {
-    log('Market is open, skipping market movers fetch (will fetch when market closes)');
-    return;
+const marketRegionMap: Record<string, string> = {
+  'US': 'US',
+  'LONDON': 'GB',
+  'TOKYO': 'JP',
+  'HONG_KONG': 'HK',
+  'FRANKFURT': 'DE',
+  'SYDNEY': 'AU',
+  'INDIA': 'IN',
+  'FOREX': 'FX'
+};
+
+/**
+ * Process a single market: fetch movers and historical data if market is closed
+ */
+async function processMarket(market: string): Promise<{ moversCount: number; historicalCount: number }> {
+  const marketConfig = MARKETS[market];
+  if (!marketConfig) {
+    return { moversCount: 0, historicalCount: 0 };
   }
   
-  log('Market is closed, fetching top 20 market movers...');
+  const marketStatus = getMarketStatus(market);
+  const isOpen = marketStatus.isOpen;
+  
+  log(`\n[${marketConfig.name}] Status: ${isOpen ? 'OPEN' : 'CLOSED'}`);
+  
+  // Skip if market is open (other scripts handle open markets)
+  if (isOpen) {
+    log(`  → Skipping ${marketConfig.name} (market is open)`);
+    return { moversCount: 0, historicalCount: 0 };
+  }
+  
+  log(`  → Processing ${marketConfig.name} (market is closed)`);
+  
+  let moversCount = 0;
+  let historicalCount = 0;
+  const symbolsToFetchHistorical: string[] = [];
   
   try {
-    // Check if we have historical data for any tracked symbols
-    const trackedSymbols = await getAllTrackedSymbols();
-    
-    if (trackedSymbols.length === 0) {
-      log('No tracked symbols found. Fetching market movers to start tracking...');
+    // Fetch movers based on market type
+    if (market === 'US') {
+      // US market: fetch gainers and losers
+      log(`  → Fetching US market movers (gainers)...`);
+      try {
+        const gainers = await fetchMarketMovers('gainers', CONFIG.MOVERS_COUNT);
+        if (gainers.length > 0) {
+          await storeMarketMovers('gainers', gainers);
+          await storeTrackedSymbolsFromMovers('gainers', gainers);
+          gainers.forEach(g => symbolsToFetchHistorical.push(g.symbol));
+          moversCount += gainers.length;
+          log(`  ✓ Stored ${gainers.length} US gainers`);
+        }
+        
+        await sleep(CONFIG.API_DELAY_MS);
+        
+        log(`  → Fetching US market movers (losers)...`);
+        const losers = await fetchMarketMovers('losers', CONFIG.MOVERS_COUNT);
+        if (losers.length > 0) {
+          await storeMarketMovers('losers', losers);
+          await storeTrackedSymbolsFromMovers('losers', losers);
+          losers.forEach(l => symbolsToFetchHistorical.push(l.symbol));
+          moversCount += losers.length;
+          log(`  ✓ Stored ${losers.length} US losers`);
+        }
+      } catch (err: any) {
+        error(`  ✗ Error fetching US market movers: ${err.message}`);
+      }
+    } else if (market === 'FOREX') {
+      // Forex market: fetch currency pairs
+      log(`  → Fetching forex currency pairs...`);
+      try {
+        const forexQuotes = await getForexQuotes(MAJOR_FOREX_PAIRS.slice(0, CONFIG.MOVERS_COUNT));
+        if (forexQuotes.length > 0) {
+          const forexMovers = forexQuotes.map(quote => ({
+            symbol: quote.symbol,
+            name: quote.name,
+            price: quote.price,
+            changePercent: quote.changePercent,
+            volume: quote.volume,
+            currency: quote.currency || 'USD'
+          }));
+          
+          await storeMarketMovers('gainers', forexMovers);
+          await storeTrackedSymbolsFromMovers('gainers', forexMovers);
+          forexQuotes.forEach(f => symbolsToFetchHistorical.push(f.symbol));
+          moversCount += forexQuotes.length;
+          log(`  ✓ Stored ${forexQuotes.length} forex currency pairs`);
+        }
+      } catch (err: any) {
+        error(`  ✗ Error fetching forex: ${err.message}`);
+      }
     } else {
-      // Check if we have historical data
-      let hasHistoricalData = false;
-      for (const symbol of trackedSymbols.slice(0, 5)) { // Check first 5 symbols
-        const range = await getHistoricalDataRange(symbol);
-        if (range.count > 0) {
-          hasHistoricalData = true;
-          break;
+      // Other markets: fetch trending symbols
+      const region = marketRegionMap[market] || 'US';
+      log(`  → Fetching trending symbols for ${marketConfig.name}...`);
+      try {
+        let trendingResult: any = null;
+        
+        try {
+          // Try with validation disabled for regions that may have schema issues
+          trendingResult = await yahooFinanceInstance.trendingSymbols(region, { count: CONFIG.MOVERS_COUNT }, { validateResult: false } as any);
+        } catch (validationErr: any) {
+          // Handle validation errors - data might still be available in error.result
+          const errorName = validationErr?.name || validationErr?.constructor?.name || '';
+          const isValidationError = errorName.includes('FailedYahooValidationError') || 
+                                    errorName.includes('ValidationError') ||
+                                    validationErr?.message?.includes('Failed Yahoo Schema validation') ||
+                                    validationErr?.message?.includes('Expected an object');
+          
+          if (isValidationError && validationErr?.result) {
+            // Extract data from validation error - data is valid, just schema validation failed
+            log(`  ⚠ Schema validation failed for ${marketConfig.name}, but extracting data from error result`);
+            trendingResult = validationErr.result;
+          } else {
+            // Re-throw if it's not a validation error
+            throw validationErr;
+          }
+        }
+        
+        if (trendingResult?.quotes && trendingResult.quotes.length > 0) {
+          const movers = trendingResult.quotes.map((quote: any) => ({
+            symbol: quote.symbol,
+            name: quote.shortName || quote.longName || quote.symbol,
+            price: quote.regularMarketPrice || 0,
+            changePercent: quote.regularMarketChangePercent || 0,
+            volume: quote.regularMarketVolume || 0,
+            currency: quote.currency || 'USD'
+          }));
+          
+          await storeMarketMovers('gainers', movers);
+          await storeTrackedSymbolsFromMovers('gainers', movers);
+          movers.forEach((m: any) => {
+            if (m.symbol) symbolsToFetchHistorical.push(m.symbol);
+          });
+          moversCount += movers.length;
+          log(`  ✓ Stored ${movers.length} trending symbols from ${marketConfig.name}`);
+        } else {
+          log(`  ⚠ No trending symbols returned for ${marketConfig.name}`);
+        }
+      } catch (err: any) {
+        error(`  ✗ Error fetching trending for ${market}: ${err.message}`);
+        // Log more details for debugging
+        if (err?.result) {
+          log(`  → Error result available but couldn't parse: ${JSON.stringify(err.result).substring(0, 200)}`);
+        }
+      }
+    }
+    
+    // Fetch historical data for all movers from this market
+    if (symbolsToFetchHistorical.length > 0) {
+      log(`  → Fetching historical data for ${symbolsToFetchHistorical.length} symbols from ${marketConfig.name}...`);
+      
+      let successCount = 0;
+      let errorCount = 0;
+      
+      for (const symbol of symbolsToFetchHistorical) {
+        try {
+          const success = await fetchHistoricalForSymbol(symbol);
+          if (success) {
+            successCount++;
+            historicalCount++;
+          } else {
+            errorCount++;
+          }
+          await sleep(CONFIG.API_DELAY_MS);
+        } catch (err: any) {
+          errorCount++;
+          error(`  ✗ Error fetching historical for ${symbol}: ${err.message}`);
         }
       }
       
-      if (!hasHistoricalData) {
-        log('No historical data found yet. Will fetch after historical data sync completes.');
-        return;
-      }
-      
-      log('Historical data exists. Proceeding to fetch market movers...');
+      log(`  ✓ Historical data: ${successCount} success, ${errorCount} errors`);
     }
     
-    // Fetch gainers
-    log('Fetching top 20 gainers...');
-    const gainers = await fetchMarketMovers('gainers', CONFIG.MOVERS_COUNT);
-    if (gainers.length > 0) {
-      await storeMarketMovers('gainers', gainers);
-      await storeTrackedSymbolsFromMovers('gainers', gainers);
-      log(`Stored ${gainers.length} gainers`);
-    } else {
-      log('No gainers data available');
-    }
-    
-    // Delay between requests
-    await sleep(CONFIG.API_DELAY_MS);
-    
-    // Fetch losers
-    log('Fetching top 20 losers...');
-    const losers = await fetchMarketMovers('losers', CONFIG.MOVERS_COUNT);
-    if (losers.length > 0) {
-      await storeMarketMovers('losers', losers);
-      await storeTrackedSymbolsFromMovers('losers', losers);
-      log(`Stored ${losers.length} losers`);
-    } else {
-      log('No losers data available');
-    }
-    
-    log(`Market movers sync complete: ${gainers.length} gainers, ${losers.length} losers`);
   } catch (err: any) {
-    error(`Error fetching market movers: ${err.message}`);
+    error(`  ✗ Error processing ${marketConfig.name}: ${err.message}`);
   }
+  
+  return { moversCount, historicalCount };
+}
+
+/**
+ * Fetch market movers and historical data for each closed market individually
+ */
+async function fetchMarketMoversWhenClosed(): Promise<void> {
+  const allMarketsStatus = getAllMarketsStatus();
+  
+  // Show market status
+  log('\n' + '='.repeat(60));
+  log('Checking market status:');
+  allMarketsStatus.forEach(marketInfo => {
+    const status = marketInfo.isOpen ? 'OPEN' : 'CLOSED';
+    log(`  ${status}: ${marketInfo.name} (${marketInfo.currentTime} ${marketInfo.timeZone.split('/')[1]})`);
+  });
+  log('='.repeat(60));
+  
+  let totalMovers = 0;
+  let totalHistorical = 0;
+  
+  // Process each market individually
+  for (const market of Object.keys(MARKETS)) {
+    const result = await processMarket(market);
+    totalMovers += result.moversCount;
+    totalHistorical += result.historicalCount;
+    
+    // Small delay between markets
+    await sleep(CONFIG.API_DELAY_MS);
+  }
+  
+  log(`\nMarket processing complete:`);
+  log(`  - Total movers fetched: ${totalMovers}`);
+  log(`  - Total historical data fetched: ${totalHistorical}`);
+  log('='.repeat(60));
 }
 
 /**
@@ -313,12 +464,9 @@ async function main() {
       await runSync();
     }, CONFIG.HISTORICAL_CHECK_INTERVAL_MS);
     
-    // Also check for market movers more frequently when market is closed
+    // Check each market individually and process closed markets
     setInterval(async () => {
-      const marketStatus = getMarketStatus('US');
-      if (!marketStatus.isOpen) {
-        await fetchMarketMoversWhenClosed();
-      }
+      await fetchMarketMoversWhenClosed();
     }, CONFIG.MOVERS_CHECK_INTERVAL_MS);
     
     log('Continuous sync started. Press Ctrl+C to stop.');
