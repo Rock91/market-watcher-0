@@ -258,3 +258,22 @@ export const fetchRecentTrades = async (limit: number = 50): Promise<TradeRespon
   if (!response.ok) throw new Error('Failed to fetch recent trades');
   return response.json();
 };
+
+// Get all tracked stocks with their latest quotes
+export interface StockWithQuote {
+  symbol: string;
+  name: string;
+  price: number;
+  change: number;
+  changePercent: number;
+  volume: number;
+  timestamp: string | null;
+  currency: string;
+}
+
+export const fetchAllStocks = async (limit: number = 1000, days: number = 7): Promise<StockWithQuote[]> => {
+  const apiUrl = getApiBaseUrl();
+  const response = await fetch(`${apiUrl}/api/stocks/all?limit=${limit}&days=${days}`);
+  if (!response.ok) throw new Error('Failed to fetch all stocks');
+  return response.json();
+};

@@ -16,10 +16,12 @@ import {
   Search,
   ShieldCheck,
   BrainCircuit,
-  RefreshCw
+  RefreshCw,
+  List
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { motion, AnimatePresence } from "framer-motion";
+import { Link } from "wouter";
 import { fetchStockQuote, fetchHistoricalData, fetchIntradayData, fetchMarketMovers, fetchTrendingSymbols, fetchAISignal, fetchTechnicalIndicators, fetchMarketStatus, storeTrade, fetchRecentTrades, type StockQuote, type TechnicalIndicatorsResponse, type MarketStatus, type TradeResponse } from "@/lib/api";
 import { useWebSocket, type PriceUpdate, type MarketMover, type AISignal, type TrendingSymbol } from "@/hooks/use-websocket";
 
@@ -1391,6 +1393,12 @@ export default function Dashboard() {
           </Badge>
         </div>
         <div className="flex items-center gap-6 text-sm font-rajdhani font-medium text-muted-foreground">
+          <Link href="/stocks">
+            <Button variant="outline" className="bg-primary/10 border-primary/50 text-primary hover:bg-primary/20">
+              <List className="w-4 h-4 mr-2" />
+              All Stocks
+            </Button>
+          </Link>
           <div className="flex items-center gap-2">
             <Clock className="w-4 h-4 text-primary" />
             <span>Market: <span className={marketStatus?.isOpen ? "text-green-400 animate-pulse" : "text-red-400"}>{marketStatus?.isOpen ? "OPEN" : "CLOSED"}</span></span>

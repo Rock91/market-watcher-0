@@ -3,10 +3,14 @@ import {
   getStockQuoteController,
   getHistoricalDataController,
   getStockHistoryController,
-  getTechnicalIndicatorsController
+  getTechnicalIndicatorsController,
+  getAllStocksController
 } from '../controllers/stockController';
 
 const router = Router();
+
+// Get all tracked stocks with their latest quotes
+router.get('/all', getAllStocksController);
 
 // Get stock quote
 router.get('/:symbol/quote', getStockQuoteController);

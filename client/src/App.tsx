@@ -3,6 +3,7 @@ import { Switch, Route } from "wouter";
 import { Toaster } from "@/components/ui/toaster";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
+import StocksDashboard from "@/pages/stocks-dashboard";
 
 const queryClient = new QueryClient();
 
@@ -10,6 +11,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
+      <Route path="/stocks" component={StocksDashboard} />
       <Route component={NotFound} />
     </Switch>
   );

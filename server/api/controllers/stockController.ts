@@ -7,7 +7,9 @@ import {
   storeStockQuote,
   getHistoricalData as getDbHistoricalData,
   storeHistoricalData,
-  getLatestTechnicalIndicators
+  getLatestTechnicalIndicators,
+  getAllTrackedSymbols,
+  getTrackedSymbols
 } from '../../services/clickhouse';
 import { calculateAllIndicators, getVolatilityLevel, getRSILevel } from '../../services/technicalIndicators';
 
@@ -376,5 +378,73 @@ export async function getTechnicalIndicatorsController(req: Request, res: Respon
   } catch (error: any) {
     console.error(`[${new Date().toISOString()}] Error calculating technical indicators:`, error);
     res.status(500).json({ error: 'Failed to calculate technical indicators', details: error.message });
+  }
+}
+
+// Get all tracked stocks with their latest quotes
+export async function getAllStocksController(req: Request, res: Response) {
+  try {
+    const { limit = 1000, days = 7 } = req.query;
+    
+    console.log(`[${new Date().toISOString()}] Fetching all tracked stocks (limit: ${limit}, days: ${days})`);
+    
+    // Get tracked symbols with names
+    const trackedSymbols = await getTrackedSymbols(parseInt(days as string) || 7, parseInt(limit as string) || 1000);
+    
+    if (!trackedSymbols || trackedSymbols.length === 0) {
+      return res.json([]);
+    }
+    
+    // Get latest quotes for all symbols
+    const stocksWithQuotes = await Promise.all(
+      trackedSymbols.map(async (item: any) => {
+        try {
+          const quote = await getLatestStockQuote(item.symbol);
+          if (quote) {
+            return {
+              symbol: item.symbol,
+              name: item.name || item.symbol,
+              price: quote.price || 0,
+              change: quote.change || 0,
+              changePercent: quote.change_percent || 0,
+              volume: quote.volume || 0,
+              timestamp: quote.timestamp,
+              currency: quote.currency || 'USD'
+            };
+          }
+          return {
+            symbol: item.symbol,
+            name: item.name || item.symbol,
+            price: 0,
+            change: 0,
+            changePercent: 0,
+            volume: 0,
+            timestamp: null,
+            currency: 'USD'
+          };
+        } catch (error) {
+          // If quote fetch fails, return basic info
+          return {
+            symbol: item.symbol,
+            name: item.name || item.symbol,
+            price: 0,
+            change: 0,
+            changePercent: 0,
+            volume: 0,
+            timestamp: null,
+            currency: 'USD'
+          };
+        }
+      })
+    );
+    
+    // Filter out stocks with no price data if needed
+    const validStocks = stocksWithQuotes.filter(stock => stock.price > 0);
+    
+    console.log(`[${new Date().toISOString()}] Returning ${validStocks.length} stocks with quotes`);
+    res.json(validStocks);
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] Error fetching all stocks:`, error);
+    res.status(500).json({ error: 'Failed to fetch all stocks', details: error.message });
   }
 }
