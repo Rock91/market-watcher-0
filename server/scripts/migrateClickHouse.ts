@@ -40,7 +40,7 @@ const LOCAL_CONFIG = {
   host: process.env.LOCAL_CLICKHOUSE_HOST || 'localhost',
   port: process.env.LOCAL_CLICKHOUSE_PORT || '8123',
   username: process.env.LOCAL_CLICKHOUSE_USERNAME || 'default',
-  password: process.env.LOCAL_CLICKHOUSE_PASSWORD || '',
+  password: process.env.LOCAL_CLICKHOUSE_PASSWORD || '1703',
   database: process.env.LOCAL_CLICKHOUSE_DATABASE || 'market_data',
 };
 
