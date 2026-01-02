@@ -53,6 +53,389 @@ function dateToClickHouseDate(date: Date): string {
   return date.toISOString().substring(0, 10);
 }
 
+// =============================================================================
+// SCHEMA INTERFACES AND VALIDATION
+// =============================================================================
+
+/**
+ * Stock Quote Schema Interface
+ */
+export interface StockQuoteSchema {
+  symbol: string;
+  timestamp: Date;
+  price: number;
+  change: number;
+  change_percent: number;
+  volume: number;
+  market_cap?: number;
+  pe_ratio?: number;
+  day_high?: number;
+  day_low?: number;
+  day_open?: number;
+  previous_close?: number;
+  currency: string;
+}
+
+/**
+ * Historical Data Schema Interface
+ */
+export interface HistoricalDataSchema {
+  date: Date;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  adj_close?: number;
+}
+
+/**
+ * Market Movers Schema Interface
+ */
+export interface MarketMoversSchema {
+  timestamp: Date;
+  type: 'gainers' | 'losers';
+  symbol: string;
+  name: string;
+  shortName?: string;
+  longName?: string;
+  price: number;
+  change?: number;
+  change_percent?: number;
+  changePercent?: number;
+  volume?: number;
+  currency?: string;
+  rank?: number;
+}
+
+/**
+ * Stock Metadata Schema Interface
+ */
+export interface StockMetadataSchema {
+  symbol: string;
+  name: string;
+  sector?: string;
+  industry?: string;
+  country?: string;
+  market_cap?: number;
+  pe_ratio?: number;
+  dividend_yield?: number;
+  beta?: number;
+}
+
+/**
+ * Trending Symbols Schema Interface
+ */
+export interface TrendingSymbolsSchema {
+  timestamp: Date;
+  symbol: string;
+  name: string;
+  rank: number;
+}
+
+/**
+ * Tracked Symbols Schema Interface
+ */
+export interface TrackedSymbolsSchema {
+  symbol: string;
+  name: string;
+  last_source: string;
+  last_type?: string;
+  last_rank?: number;
+  last_seen: Date;
+}
+
+/**
+ * Script Execution Log Schema Interface
+ */
+export interface ScriptExecutionLogSchema {
+  script_name: string;
+  status: 'success' | 'failed' | 'running';
+  started_at: Date;
+  completed_at?: Date;
+  duration_ms?: number;
+  error_message?: string;
+  metadata?: string;
+}
+
+/**
+ * AI Strategy Results Schema Interface
+ */
+export interface AIStrategyResultsSchema {
+  timestamp: Date;
+  symbol: string;
+  strategy: string;
+  action: 'BUY' | 'SELL' | 'HOLD';
+  confidence: number;
+  price: number;
+  reason?: string;
+  indicators?: string;
+}
+
+/**
+ * Trade History Schema Interface
+ */
+export interface TradeHistorySchema {
+  trade_id: string;
+  signal_id: string | null;
+  timestamp: Date;
+  symbol: string;
+  action: 'BUY' | 'SELL';
+  strategy: string;
+  entry_price: number;
+  quantity: number;
+  investment_amount: number;
+  confidence: number;
+  exit_price?: number;
+  exit_timestamp?: Date;
+  profit_loss?: number;
+  profit_loss_percent?: number;
+  status: 'open' | 'closed' | 'cancelled';
+  reason: string;
+}
+
+/**
+ * Validate Stock Quote data
+ */
+function validateStockQuote(data: any): data is StockQuoteSchema {
+  if (!data || typeof data !== 'object') return false;
+
+  // Required fields
+  if (typeof data.symbol !== 'string' || !data.symbol) return false;
+  if (typeof data.price !== 'number' || isNaN(data.price)) return false;
+  if (typeof data.change !== 'number' || isNaN(data.change)) return false;
+  if (typeof data.change_percent !== 'number' || isNaN(data.change_percent)) return false;
+  if (typeof data.volume !== 'number' || isNaN(data.volume)) return false;
+  if (typeof data.currency !== 'string' || !data.currency) return false;
+
+  // Timestamp validation
+  if (!(data.timestamp instanceof Date) && typeof data.timestamp !== 'string') return false;
+
+  // Optional numeric fields
+  const optionalNumbers = ['market_cap', 'pe_ratio', 'day_high', 'day_low', 'day_open', 'previous_close'];
+  for (const field of optionalNumbers) {
+    if (data[field] !== undefined && (typeof data[field] !== 'number' || isNaN(data[field]))) return false;
+  }
+
+  return true;
+}
+
+/**
+ * Validate Historical Data
+ */
+function validateHistoricalData(data: any): data is HistoricalDataSchema {
+  if (!data || typeof data !== 'object') return false;
+
+  // Required numeric fields
+  const requiredNumbers = ['open', 'high', 'low', 'close', 'volume'];
+  for (const field of requiredNumbers) {
+    if (typeof data[field] !== 'number' || isNaN(data[field])) return false;
+  }
+
+  // Date validation
+  if (!(data.date instanceof Date) && typeof data.date !== 'string') return false;
+
+  // Optional adj_close
+  if (data.adj_close !== undefined && (typeof data.adj_close !== 'number' || isNaN(data.adj_close))) return false;
+
+  return true;
+}
+
+/**
+ * Validate Market Movers data
+ */
+function validateMarketMovers(data: any): data is MarketMoversSchema {
+  if (!data || typeof data !== 'object') return false;
+
+  // Required fields
+  if (!['gainers', 'losers'].includes(data.type)) return false;
+  if (typeof data.symbol !== 'string' || !data.symbol) return false;
+  if (typeof data.name !== 'string' || !data.name) return false;
+  if (typeof data.price !== 'number' || isNaN(data.price)) return false;
+
+  // Timestamp validation
+  if (!(data.timestamp instanceof Date) && typeof data.timestamp !== 'string') return false;
+
+  // Optional numeric fields
+  const optionalNumbers = ['change', 'change_percent', 'changePercent', 'volume', 'rank'];
+  for (const field of optionalNumbers) {
+    if (data[field] !== undefined && (typeof data[field] !== 'number' || isNaN(data[field]))) return false;
+  }
+
+  // Optional string fields
+  const optionalStrings = ['currency', 'shortName', 'longName'];
+  for (const field of optionalStrings) {
+    if (data[field] !== undefined && typeof data[field] !== 'string') return false;
+  }
+
+  return true;
+}
+
+/**
+ * Validate Stock Metadata
+ */
+function validateStockMetadata(data: any): data is StockMetadataSchema {
+  if (!data || typeof data !== 'object') return false;
+
+  // Required fields
+  if (typeof data.symbol !== 'string' || !data.symbol) return false;
+  if (typeof data.name !== 'string' || !data.name) return false;
+
+  // Optional string fields
+  const optionalStrings = ['sector', 'industry', 'country'];
+  for (const field of optionalStrings) {
+    if (data[field] !== undefined && typeof data[field] !== 'string') return false;
+  }
+
+  // Optional numeric fields
+  const optionalNumbers = ['market_cap', 'pe_ratio', 'dividend_yield', 'beta'];
+  for (const field of optionalNumbers) {
+    if (data[field] !== undefined && (typeof data[field] !== 'number' || isNaN(data[field]))) return false;
+  }
+
+  return true;
+}
+
+/**
+ * Validate Trending Symbols data
+ */
+function validateTrendingSymbols(data: any): data is TrendingSymbolsSchema {
+  if (!data || typeof data !== 'object') return false;
+
+  // Required fields
+  if (typeof data.symbol !== 'string' || !data.symbol) return false;
+  if (typeof data.name !== 'string' || !data.name) return false;
+  if (typeof data.rank !== 'number' || isNaN(data.rank) || data.rank < 1) return false;
+
+  // Timestamp validation
+  if (!(data.timestamp instanceof Date) && typeof data.timestamp !== 'string') return false;
+
+  return true;
+}
+
+/**
+ * Validate Tracked Symbols data
+ */
+function validateTrackedSymbols(data: any): data is TrackedSymbolsSchema {
+  if (!data || typeof data !== 'object') return false;
+
+  // Required fields
+  if (typeof data.symbol !== 'string' || !data.symbol) return false;
+  if (typeof data.name !== 'string' || !data.name) return false;
+  if (typeof data.last_source !== 'string' || !data.last_source) return false;
+
+  // Date validation
+  if (!(data.last_seen instanceof Date) && typeof data.last_seen !== 'string') return false;
+
+  // Optional fields
+  if (data.last_type !== undefined && typeof data.last_type !== 'string') return false;
+  if (data.last_rank !== undefined && (typeof data.last_rank !== 'number' || isNaN(data.last_rank))) return false;
+
+  return true;
+}
+
+/**
+ * Validate Script Execution Log data
+ */
+function validateScriptExecutionLog(data: any): data is ScriptExecutionLogSchema {
+  if (!data || typeof data !== 'object') return false;
+
+  // Required fields
+  if (typeof data.script_name !== 'string' || !data.script_name) return false;
+  if (!['success', 'failed', 'running'].includes(data.status)) return false;
+
+  // Date validation
+  if (!(data.started_at instanceof Date) && typeof data.started_at !== 'string') return false;
+
+  // Optional fields
+  if (data.completed_at !== undefined && !(data.completed_at instanceof Date) && typeof data.completed_at !== 'string') return false;
+  if (data.duration_ms !== undefined && (typeof data.duration_ms !== 'number' || isNaN(data.duration_ms))) return false;
+  if (data.error_message !== undefined && typeof data.error_message !== 'string') return false;
+  if (data.metadata !== undefined && typeof data.metadata !== 'string') return false;
+
+  return true;
+}
+
+/**
+ * Validate AI Strategy Results data
+ */
+function validateAIStrategyResults(data: any): data is AIStrategyResultsSchema {
+  if (!data || typeof data !== 'object') return false;
+
+  // Required fields
+  if (typeof data.symbol !== 'string' || !data.symbol) return false;
+  if (typeof data.strategy !== 'string' || !data.strategy) return false;
+  if (!['BUY', 'SELL', 'HOLD'].includes(data.action)) return false;
+  if (typeof data.confidence !== 'number' || isNaN(data.confidence) || data.confidence < 0 || data.confidence > 1) return false;
+  if (typeof data.price !== 'number' || isNaN(data.price)) return false;
+
+  // Timestamp validation
+  if (!(data.timestamp instanceof Date) && typeof data.timestamp !== 'string') return false;
+
+  // Optional fields
+  if (data.reason !== undefined && typeof data.reason !== 'string') return false;
+  if (data.indicators !== undefined && typeof data.indicators !== 'string') return false;
+
+  return true;
+}
+
+/**
+ * Validate Trade History data
+ */
+function validateTradeHistory(data: any): data is TradeHistorySchema {
+  if (!data || typeof data !== 'object') return false;
+
+  // Required fields
+  if (typeof data.trade_id !== 'string' || !data.trade_id) return false;
+  if (data.signal_id !== null && typeof data.signal_id !== 'string') return false;
+  if (typeof data.symbol !== 'string' || !data.symbol) return false;
+  if (!['BUY', 'SELL'].includes(data.action)) return false;
+  if (typeof data.strategy !== 'string' || !data.strategy) return false;
+  if (typeof data.entry_price !== 'number' || isNaN(data.entry_price)) return false;
+  if (typeof data.quantity !== 'number' || isNaN(data.quantity)) return false;
+  if (typeof data.investment_amount !== 'number' || isNaN(data.investment_amount)) return false;
+  if (typeof data.confidence !== 'number' || isNaN(data.confidence)) return false;
+  if (!['open', 'closed', 'cancelled'].includes(data.status)) return false;
+  if (typeof data.reason !== 'string' || !data.reason) return false;
+
+  // Timestamp validation
+  if (!(data.timestamp instanceof Date) && typeof data.timestamp !== 'string') return false;
+
+  // Optional numeric fields
+  const optionalNumbers = ['exit_price', 'profit_loss', 'profit_loss_percent'];
+  for (const field of optionalNumbers) {
+    if (data[field] !== undefined && (typeof data[field] !== 'number' || isNaN(data[field]))) return false;
+  }
+
+  // Optional exit timestamp
+  if (data.exit_timestamp !== undefined && !(data.exit_timestamp instanceof Date) && typeof data.exit_timestamp !== 'string') return false;
+
+  return true;
+}
+
+/**
+ * Generic schema validation wrapper with error logging
+ */
+function validateData<T>(data: any[], validator: (item: any) => item is T, schemaName: string): T[] {
+  const validData: T[] = [];
+  const invalidItems: any[] = [];
+
+  for (const item of data) {
+    if (validator(item)) {
+      validData.push(item as T);
+    } else {
+      invalidItems.push(item);
+    }
+  }
+
+  if (invalidItems.length > 0) {
+    console.warn(`[${new Date().toISOString()}] Schema validation failed for ${schemaName}: ${invalidItems.length} invalid items out of ${data.length} total`);
+    console.warn(`[${new Date().toISOString()}] Invalid ${schemaName} samples:`, invalidItems.slice(0, 3));
+  }
+
+  return validData;
+}
+
 // Sanitize symbol name for use in table name (ClickHouse table names must be valid identifiers)
 function sanitizeTableName(symbol: string): string {
   // Replace invalid characters with underscore, ensure it starts with a letter or number
@@ -521,12 +904,18 @@ export async function initializeClickHouse() {
 // Store multiple stock quotes in a single ClickHouse insert (much faster than per-row inserts)
 // Now stores each stock in its own table
 export async function storeStockQuotes(quotes: any[], timestamp: Date = new Date()) {
+  // Validate and filter data
+  const validQuotes = validateData(quotes, validateStockQuote, 'StockQuotes');
+  if (validQuotes.length === 0) {
+    console.warn(`[${new Date().toISOString()}] No valid stock quotes to store`);
+    return;
+  }
   try {
     if (!quotes || quotes.length === 0) return;
 
     // Group quotes by symbol to insert into per-stock tables
     const quotesBySymbol = new Map<string, any[]>();
-    for (const quote of quotes) {
+    for (const quote of validQuotes) {
       const symbol = quote.symbol;
       if (!symbol) continue;
       
@@ -574,10 +963,20 @@ export async function storeStockQuote(quote: any) {
 
 // Store market movers data
 export async function storeMarketMovers(type: 'gainers' | 'losers', movers: any[]) {
+  // Validate and filter data
+  const validMovers = validateData(movers, (mover: any): mover is MarketMoversSchema => {
+    if (!mover || typeof mover !== 'object') return false;
+    return validateMarketMovers({...mover, type});
+  }, 'MarketMovers');
+  if (validMovers.length === 0) {
+    console.warn(`[${new Date().toISOString()}] No valid market movers to store`);
+    return;
+  }
+
   try {
     const timestamp = new Date(); // single snapshot timestamp for all rows
     const timestampStr = dateToClickHouseDateTime(timestamp);
-    const values = movers.map((mover, index) => ({
+    const values = validMovers.map((mover, index) => ({
       timestamp: timestampStr,
       type,
       symbol: mover.symbol,
@@ -614,10 +1013,20 @@ export async function storeTrackedSymbolsFromMovers(
       console.log(`[${new Date().toISOString()}] No movers to track for ${type}`);
       return;
     }
+
+    // Validate and filter data
+    const validMovers = validateData(movers, (mover: any): mover is MarketMoversSchema => {
+      if (!mover || typeof mover !== 'object') return false;
+      return validateMarketMovers({...mover, type});
+    }, 'TrackedSymbolsMovers');
+    if (validMovers.length === 0) {
+      console.warn(`[${new Date().toISOString()}] No valid movers to track for ${type}`);
+      return;
+    }
     const lastSeen = new Date();
     const lastSeenStr = dateToClickHouseDateTime(lastSeen);
     
-    const values = movers.map((mover, index) => ({
+    const values = validMovers.map((mover, index) => ({
       symbol: mover.symbol,
       name: mover.name || mover.shortName || mover.longName || mover.symbol,
       last_source: source,
@@ -814,9 +1223,16 @@ export async function storeHistoricalData(symbol: string, data: any[]) {
   try {
     if (!data || data.length === 0) return;
 
+    // Validate and filter data
+    const validData = validateData(data, validateHistoricalData, 'HistoricalData');
+    if (validData.length === 0) {
+      console.warn(`[${new Date().toISOString()}] No valid historical data to store for ${symbol}`);
+      return;
+    }
+
     await ensureHistoricalDataTable(symbol);
 
-    const values = data.map((item: any) => {
+    const values = validData.map((item: any) => {
       const dateValue = item.date || item.time || item.timestamp;
       const dateObj = dateValue instanceof Date ? dateValue : new Date(dateValue);
       return {
@@ -913,12 +1329,19 @@ export async function getHistoricalData(symbol: string, days: number = 30) {
 
 // Store trending symbols
 export async function storeTrendingSymbols(symbols: any[]) {
+  // Validate and filter data
+  const validSymbols = validateData(symbols, validateTrendingSymbols, 'TrendingSymbols');
+  if (validSymbols.length === 0) {
+    console.warn(`[${new Date().toISOString()}] No valid trending symbols to store`);
+    return;
+  }
+
   try {
     if (!symbols || symbols.length === 0) return;
 
     const timestamp = new Date(); // single snapshot timestamp
     const timestampStr = dateToClickHouseDateTime(timestamp);
-    const values = symbols.map((item: any, index: number) => ({
+    const values = validSymbols.map((item: any, index: number) => ({
       timestamp: timestampStr,
       symbol: item.symbol,
       name: item.shortName || item.longName || item.symbol,
@@ -1252,6 +1675,12 @@ export interface ScriptExecutionLog {
 
 // Start logging a script execution
 export async function logScriptStart(scriptName: string, metadata?: Record<string, any>): Promise<string | null> {
+  // Validate input
+  if (!scriptName || typeof scriptName !== 'string') {
+    console.warn(`[${new Date().toISOString()}] Invalid script name for logging:`, scriptName);
+    return null;
+  }
+
   try {
     const startedAt = new Date();
     const logEntry = {
@@ -1444,7 +1873,29 @@ export async function storeTechnicalIndicators(indicators: TechnicalIndicatorDat
   try {
     if (!indicators || indicators.length === 0) return;
 
-    const values = indicators.map((indicator) => ({
+    // Additional validation for technical indicators
+    const validIndicators = indicators.filter(indicator => {
+      if (!validateHistoricalData({date: indicator.date, open: 1, high: 1, low: 1, close: 1, volume: 1})) {
+        console.warn(`[${new Date().toISOString()}] Invalid technical indicator date:`, indicator);
+        return false;
+      }
+      // Validate numeric fields
+      const numericFields = ['rsi', 'macdValue', 'macdSignal', 'macdHistogram', 'volatility', 'volatilityPercent'];
+      for (const field of numericFields) {
+        if (typeof (indicator as any)[field] !== 'number' || isNaN((indicator as any)[field])) {
+          console.warn(`[${new Date().toISOString()}] Invalid technical indicator ${field}:`, indicator);
+          return false;
+        }
+      }
+      return true;
+    });
+
+    if (validIndicators.length === 0) {
+      console.warn(`[${new Date().toISOString()}] No valid technical indicators to store`);
+      return;
+    }
+
+    const values = validIndicators.map((indicator) => ({
       date: dateToClickHouseDate(indicator.date instanceof Date ? indicator.date : new Date(indicator.date)),
       symbol: indicator.symbol,
       rsi: indicator.rsi,
@@ -1634,6 +2085,12 @@ export interface Trade {
 
 // Store AI strategy result
 export async function storeAIStrategyResult(result: AIStrategyResult): Promise<void> {
+  // Validate data
+  if (!validateAIStrategyResults(result)) {
+    console.warn(`[${new Date().toISOString()}] Invalid AI strategy result:`, result);
+    return;
+  }
+
   try {
     const indicators = result.technicalIndicators || {};
     const bb = indicators.bollingerBands;
@@ -1668,6 +2125,23 @@ export async function storeAIStrategyResult(result: AIStrategyResult): Promise<v
 
 // Store AI signal (high confidence > 75%)
 export async function storeAISignal(signal: AISignal): Promise<void> {
+  // Basic validation - AISignal interface should be properly typed
+  if (!signal || typeof signal !== 'object') {
+    console.warn(`[${new Date().toISOString()}] Invalid AI signal data:`, signal);
+    return;
+  }
+
+  // Validate required fields
+  if (!signal.signalId || !signal.symbol || !signal.strategy || !signal.action) {
+    console.warn(`[${new Date().toISOString()}] Missing required AI signal fields:`, signal);
+    return;
+  }
+
+  if (typeof signal.confidence !== 'number' || signal.confidence < 0 || signal.confidence > 1) {
+    console.warn(`[${new Date().toISOString()}] Invalid AI signal confidence:`, signal);
+    return;
+  }
+
   try {
     await clickhouseClient.insert({
       table: `${CLICKHOUSE_CONFIG.database}.ai_signals`,
@@ -1694,6 +2168,12 @@ export async function storeAISignal(signal: AISignal): Promise<void> {
 
 // Store trade history
 export async function storeTrade(trade: Trade): Promise<void> {
+  // Validate trade data
+  if (!validateTradeHistory(trade)) {
+    console.warn(`[${new Date().toISOString()}] Invalid trade data:`, trade);
+    return;
+  }
+
   try {
     await clickhouseClient.insert({
       table: `${CLICKHOUSE_CONFIG.database}.trade_history`,
