@@ -20,6 +20,24 @@ export const clickhouseClient = createClient({
 const createdTablesCache = new Set<string>();
 
 /**
+ * Check if error is a ClickHouse connection error
+ */
+function isClickHouseConnectionError(errorMsg: string): boolean {
+  return errorMsg.includes('socket hang up') ||
+         errorMsg.includes('ECONNREFUSED') ||
+         errorMsg.includes('timeout');
+}
+
+/**
+ * Check if error indicates table doesn't exist
+ */
+function isClickHouseTableNotFoundError(error: any): boolean {
+  const errorMsg = error?.message || String(error);
+  const errorCode = (error as any)?.code;
+  return errorCode === '60' || errorMsg.includes('does not exist') || error?.type === 'UNKNOWN_TABLE';
+}
+
+/**
  * Convert JavaScript Date to ClickHouse DateTime string format
  * ClickHouse expects: 'YYYY-MM-DD HH:MM:SS'
  */
@@ -477,7 +495,7 @@ export async function initializeClickHouse() {
     const errorCode = (error as any)?.code;
     const errorType = (error as any)?.type;
     
-    if (errorMsg.includes('socket hang up') || errorMsg.includes('ECONNREFUSED') || errorMsg.includes('timeout')) {
+    if (isClickHouseConnectionError(errorMsg)) {
       console.warn(`[${new Date().toISOString()}] ClickHouse is not available at ${CLICKHOUSE_CONFIG.host}:${CLICKHOUSE_CONFIG.port} (server will continue without database storage)`);
       console.warn(`[${new Date().toISOString()}] To enable ClickHouse: install and start ClickHouse server, or set CLICKHOUSE_HOST environment variable`);
     } else if (errorCode === '81' || errorType === 'UNKNOWN_DATABASE' || errorMsg.includes('does not exist')) {
@@ -825,7 +843,7 @@ export async function storeHistoricalData(symbol: string, data: any[]) {
     const errorCode = (error as any)?.code;
     
     // Only silently fail if it's a connection issue
-    if (errorMsg.includes('socket hang up') || errorMsg.includes('ECONNREFUSED') || errorMsg.includes('timeout')) {
+    if (isClickHouseConnectionError(errorMsg)) {
       console.warn(`[${new Date().toISOString()}] ClickHouse not available, skipping historical data storage for ${symbol}`);
       return;
     }
@@ -882,9 +900,9 @@ export async function getHistoricalData(symbol: string, days: number = 30) {
     const errorCode = (error as any)?.code;
     
     // Log detailed error information
-    if (errorMsg.includes('does not exist') || errorCode === '60') {
+    if (isClickHouseTableNotFoundError(error)) {
       console.warn(`[${new Date().toISOString()}] Historical data table for ${symbol} does not exist yet. No data available.`);
-    } else if (errorMsg.includes('ECONNREFUSED') || errorMsg.includes('socket hang up')) {
+    } else if (isClickHouseConnectionError(errorMsg)) {
       console.warn(`[${new Date().toISOString()}] ClickHouse not available, cannot retrieve historical data for ${symbol}`);
     } else {
       console.error(`[${new Date().toISOString()}] Error querying historical data for ${symbol}:`, errorMsg, errorCode);
@@ -1597,7 +1615,7 @@ export interface AISignal {
 
 export interface Trade {
   tradeId: string;
-  signalId: string;
+  signalId: string | null;
   timestamp: Date;
   symbol: string;
   action: 'BUY' | 'SELL';
@@ -1747,7 +1765,7 @@ export async function getPendingAISignals(limit: number = 100): Promise<AISignal
     }));
   } catch (error: any) {
     // If table doesn't exist, return empty array (tables will be created on server restart)
-    if (error?.code === '60' || error?.message?.includes('does not exist') || error?.type === 'UNKNOWN_TABLE') {
+    if (isClickHouseTableNotFoundError(error)) {
       console.warn(`[${new Date().toISOString()}] AI signals table does not exist yet. Tables will be created on server restart.`);
       return [];
     }
@@ -1816,7 +1834,7 @@ export async function getOpenTrades(symbol?: string): Promise<Trade[]> {
     }));
   } catch (error: any) {
     // If table doesn't exist, return empty array (tables will be created on server restart)
-    if (error?.code === '60' || error?.message?.includes('does not exist') || error?.type === 'UNKNOWN_TABLE') {
+    if (isClickHouseTableNotFoundError(error)) {
       console.warn(`[${new Date().toISOString()}] Trade history table does not exist yet. Tables will be created on server restart.`);
       return [];
     }

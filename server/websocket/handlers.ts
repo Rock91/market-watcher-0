@@ -11,11 +11,9 @@ import {
   WebSocketEventType
 } from './types';
 import { generateAISignal, type MarketData } from '../services/ai-strategies';
-import { storeAISignal, type AISignal } from '../services/clickhouse';
+import { storeAISignal, type AISignal, getStockHistory, getHistoricalData as getDbHistoricalData } from '../services/clickhouse';
 import { v4 as uuidv4 } from 'uuid';
 import { getHistoricalData } from '../services/yahooFinance';
-import { getStockHistory, getHistoricalData as getDbHistoricalData, storeAISignal, type AISignal } from '../services/clickhouse';
-import { v4 as uuidv4 } from 'uuid';
 
 // Generate unique client ID
 function generateClientId(): string {

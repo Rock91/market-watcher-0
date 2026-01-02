@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -50,16 +50,11 @@ export default function StocksDashboard() {
     loadStocks();
   }, []);
 
-  useEffect(() => {
-    filterStocks();
-  }, [searchQuery, stocks]);
-
   const loadStocks = async () => {
     try {
       setLoading(true);
       const data = await fetchAllStocks(1000, 7);
       setStocks(data);
-      setFilteredStocks(data);
     } catch (error) {
       console.error("Error loading stocks:", error);
     } finally {
@@ -67,20 +62,46 @@ export default function StocksDashboard() {
     }
   };
 
-  const filterStocks = () => {
-    if (!searchQuery.trim()) {
-      setFilteredStocks(stocks);
-      return;
+  // Memoized filtering and sorting
+  const filteredAndSortedStocks = useMemo(() => {
+    // First filter
+    let result = stocks;
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      result = stocks.filter(
+        (stock) =>
+          stock.symbol.toLowerCase().includes(query) ||
+          stock.name.toLowerCase().includes(query)
+      );
     }
 
-    const query = searchQuery.toLowerCase();
-    const filtered = stocks.filter(
-      (stock) =>
-        stock.symbol.toLowerCase().includes(query) ||
-        stock.name.toLowerCase().includes(query)
-    );
-    setFilteredStocks(filtered);
-  };
+    // Then sort if needed
+    if (sortConfig.key) {
+      result = [...result].sort((a, b) => {
+        const aValue = a[sortConfig.key!];
+        const bValue = b[sortConfig.key!];
+
+        if (typeof aValue === 'number' && typeof bValue === 'number') {
+          return sortConfig.direction === 'asc' ? aValue - bValue : bValue - aValue;
+        }
+
+        if (typeof aValue === 'string' && typeof bValue === 'string') {
+          return sortConfig.direction === 'asc'
+            ? aValue.localeCompare(bValue)
+            : bValue.localeCompare(aValue);
+        }
+
+        return 0;
+      });
+    }
+
+    return result;
+  }, [stocks, searchQuery, sortConfig]);
+
+  // Update filteredStocks when the memoized value changes
+  useEffect(() => {
+    setFilteredStocks(filteredAndSortedStocks);
+  }, [filteredAndSortedStocks]);
 
   const handleSort = (key: keyof StockWithQuote) => {
     let direction: 'asc' | 'desc' = 'asc';
@@ -89,25 +110,6 @@ export default function StocksDashboard() {
     }
 
     setSortConfig({ key, direction });
-
-    const sorted = [...filteredStocks].sort((a, b) => {
-      const aValue = a[key];
-      const bValue = b[key];
-
-      if (typeof aValue === 'number' && typeof bValue === 'number') {
-        return direction === 'asc' ? aValue - bValue : bValue - aValue;
-      }
-
-      if (typeof aValue === 'string' && typeof bValue === 'string') {
-        return direction === 'asc'
-          ? aValue.localeCompare(bValue)
-          : bValue.localeCompare(aValue);
-      }
-
-      return 0;
-    });
-
-    setFilteredStocks(sorted);
   };
 
   const handleViewHistory = async (stock: StockWithQuote) => {

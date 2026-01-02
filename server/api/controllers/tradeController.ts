@@ -62,11 +62,11 @@ export async function storeTradeController(req: Request, res: Response) {
       quantity: calculatedQuantity,
       investmentAmount: amount,
       confidence,
-      exitPrice: null,
-      exitTimestamp: null,
-      profitLoss: null,
-      profitLossPercent: null,
-      status: 'open',
+      exitPrice: undefined,
+      exitTimestamp: undefined,
+      profitLoss: undefined,
+      profitLossPercent: undefined,
+      status: 'open' as const,
       reason: reason || `Dashboard trade with ${confidence.toFixed(1)}% confidence`,
     };
 
