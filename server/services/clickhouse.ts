@@ -54,6 +54,259 @@ function dateToClickHouseDate(date: Date): string {
 }
 
 // =============================================================================
+// DATABASE OPERATIONS & RELIABILITY
+// =============================================================================
+
+/**
+ * Database operation result
+ */
+interface DatabaseOperationResult<T = any> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  retryable?: boolean;
+  operationId?: string;
+}
+
+/**
+ * Batch operation configuration
+ */
+interface BatchOperationConfig {
+  maxBatchSize?: number;
+  maxRetries?: number;
+  retryDelay?: number;
+  continueOnError?: boolean;
+  operationTimeout?: number;
+}
+
+/**
+ * Default batch operation configuration
+ */
+const DEFAULT_BATCH_CONFIG: BatchOperationConfig = {
+  maxBatchSize: 1000,
+  maxRetries: 3,
+  retryDelay: 1000,
+  continueOnError: false,
+  operationTimeout: 30000,
+};
+
+/**
+ * Check if ClickHouse connection is healthy
+ */
+async function checkConnectionHealth(): Promise<boolean> {
+  try {
+    await clickhouseClient.query({
+      query: 'SELECT 1',
+      format: 'JSONEachRow',
+    });
+    return true;
+  } catch (error) {
+    console.warn(`[${new Date().toISOString()}] ClickHouse connection health check failed:`, error);
+    return false;
+  }
+}
+
+/**
+ * Execute operation with retry logic
+ */
+async function executeWithRetry<T>(
+  operation: () => Promise<T>,
+  config: Partial<BatchOperationConfig> = {},
+  operationName: string = 'database operation'
+): Promise<DatabaseOperationResult<T>> {
+  const { maxRetries = 3, retryDelay = 1000 } = { ...DEFAULT_BATCH_CONFIG, ...config };
+  let lastError: any;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await operation();
+      return { success: true, data: result };
+    } catch (error: any) {
+      lastError = error;
+      const errorMsg = error?.message || String(error);
+
+      // Check if error is retryable
+      const isRetryable = isClickHouseConnectionError(errorMsg) ||
+                         errorMsg.includes('timeout') ||
+                         errorMsg.includes('connection') ||
+                         error.code === 'ECONNRESET';
+
+      console.warn(`[${new Date().toISOString()}] ${operationName} attempt ${attempt}/${maxRetries} failed:`, errorMsg);
+
+      if (!isRetryable || attempt === maxRetries) {
+        return {
+          success: false,
+          error: errorMsg,
+          retryable: isRetryable,
+        };
+      }
+
+      // Wait before retry
+      await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
+    }
+  }
+
+  return {
+    success: false,
+    error: lastError?.message || 'Unknown error',
+    retryable: true,
+  };
+}
+
+/**
+ * Execute batch insert with proper error handling and rollback logic
+ */
+async function executeBatchInsert(
+  tableName: string,
+  values: any[],
+  config: Partial<BatchOperationConfig> = {},
+  operationName: string = 'batch insert'
+): Promise<DatabaseOperationResult<number>> {
+  const fullConfig = { ...DEFAULT_BATCH_CONFIG, ...config };
+  const { maxBatchSize = 1000, continueOnError = false } = fullConfig;
+
+  if (!values || values.length === 0) {
+    return { success: true, data: 0 };
+  }
+
+  // Check connection health first
+  if (!(await checkConnectionHealth())) {
+    return {
+      success: false,
+      error: 'ClickHouse connection is not healthy',
+      retryable: true,
+    };
+  }
+
+  const batches: any[][] = [];
+  for (let i = 0; i < values.length; i += maxBatchSize) {
+    batches.push(values.slice(i, i + maxBatchSize));
+  }
+
+  let totalInserted = 0;
+  let hasErrors = false;
+  const errors: string[] = [];
+
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i];
+    const batchResult = await executeWithRetry(
+      async () => {
+        await clickhouseClient.insert({
+          table: tableName,
+          values: batch,
+          format: 'JSONEachRow',
+        });
+        return batch.length;
+      },
+      fullConfig,
+      `${operationName} (batch ${i + 1}/${batches.length})`
+    );
+
+    if (batchResult.success) {
+      totalInserted += batchResult.data!;
+    } else {
+      hasErrors = true;
+      errors.push(`Batch ${i + 1}: ${batchResult.error}`);
+
+      if (!continueOnError) {
+        // Stop processing further batches on error
+        break;
+      }
+    }
+  }
+
+  if (hasErrors) {
+    return {
+      success: false,
+      error: `Batch insert partially failed: ${errors.join('; ')}`,
+      data: totalInserted,
+    };
+  }
+
+  return { success: true, data: totalInserted };
+}
+
+/**
+ * Execute batch query with proper error handling
+ */
+async function executeBatchQuery<T = any[]>(
+  query: string,
+  queryParams: Record<string, any> = {},
+  config: Partial<BatchOperationConfig> = {},
+  operationName: string = 'batch query'
+): Promise<DatabaseOperationResult<T>> {
+  return executeWithRetry(
+    async () => {
+      const result = await clickhouseClient.query({
+        query,
+        query_params: queryParams,
+        format: 'JSONEachRow',
+      });
+      return await result.json() as T;
+    },
+    config,
+    operationName
+  );
+}
+
+/**
+ * Safe table operation wrapper that handles table creation and existence checks
+ */
+async function executeTableOperation(
+  operation: () => Promise<any>,
+  tableName: string,
+  operationName: string = 'table operation'
+): Promise<DatabaseOperationResult> {
+  try {
+    // First check if table exists
+    const tableCheck = await executeBatchQuery(
+      `SHOW TABLES LIKE '${tableName.split('.').pop()}'`,
+      {},
+      { maxRetries: 1 },
+      `table existence check for ${tableName}`
+    );
+
+    if (!tableCheck.success) {
+      return {
+        success: false,
+        error: `Cannot verify table ${tableName} exists: ${tableCheck.error}`,
+      };
+    }
+
+    // Execute the operation
+    const result = await executeWithRetry(
+      operation,
+      { maxRetries: 2 },
+      operationName
+    );
+
+    return result;
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error?.message || 'Table operation failed',
+    };
+  }
+}
+
+/**
+ * Create database operation wrapper for consistent error handling
+ */
+function createDatabaseOperation<T extends any[], R>(
+  operation: (...args: T) => Promise<R>,
+  operationName: string,
+  config: Partial<BatchOperationConfig> = {}
+) {
+  return async (...args: T): Promise<DatabaseOperationResult<R>> => {
+    return executeWithRetry(
+      () => operation(...args),
+      config,
+      operationName
+    );
+  };
+}
+
+// =============================================================================
 // SCHEMA INTERFACES AND VALIDATION
 // =============================================================================
 
@@ -902,7 +1155,7 @@ export async function initializeClickHouse() {
 }
 
 // Store multiple stock quotes in a single ClickHouse insert (much faster than per-row inserts)
-// Now stores each stock in its own table
+// Store multiple stock quotes with robust batch processing and error handling
 export async function storeStockQuotes(quotes: any[], timestamp: Date = new Date()) {
   // Validate and filter data
   const validQuotes = validateData(quotes, validateStockQuote, 'StockQuotes');
@@ -910,49 +1163,83 @@ export async function storeStockQuotes(quotes: any[], timestamp: Date = new Date
     console.warn(`[${new Date().toISOString()}] No valid stock quotes to store`);
     return;
   }
-  try {
-    if (!quotes || quotes.length === 0) return;
 
-    // Group quotes by symbol to insert into per-stock tables
-    const quotesBySymbol = new Map<string, any[]>();
-    for (const quote of validQuotes) {
-      const symbol = quote.symbol;
-      if (!symbol) continue;
-      
-      if (!quotesBySymbol.has(symbol)) {
-        quotesBySymbol.set(symbol, []);
-      }
-      quotesBySymbol.get(symbol)!.push(quote);
+  // Prepare data for batch insert
+  const timestampStr = dateToClickHouseDateTime(timestamp);
+  const quotesBySymbol = new Map<string, any[]>();
+
+  // Group quotes by symbol to insert into per-stock tables
+  for (const quote of validQuotes) {
+    const symbol = quote.symbol;
+    if (!symbol) continue;
+
+    if (!quotesBySymbol.has(symbol)) {
+      quotesBySymbol.set(symbol, []);
     }
+    quotesBySymbol.get(symbol)!.push({
+      timestamp: timestampStr,
+      price: quote.price || 0,
+      change: quote.change || 0,
+      change_percent: quote.change_percent || 0,
+      volume: quote.volume || 0,
+      market_cap: quote.market_cap || null,
+      pe_ratio: quote.pe_ratio || null,
+      day_high: quote.day_high || null,
+      day_low: quote.day_low || null,
+      day_open: quote.day_open || null,
+      previous_close: quote.previous_close || null,
+      currency: quote.currency || 'USD',
+    });
+  }
 
-    // Insert into each stock's table
-    const symbols = Array.from(quotesBySymbol.keys());
-    for (const symbol of symbols) {
-      const symbolQuotes = quotesBySymbol.get(symbol)!;
+  // Execute batch inserts for each symbol with proper error handling
+  const insertPromises: Promise<DatabaseOperationResult<number>>[] = [];
+  for (const symbol of Array.from(quotesBySymbol.keys())) {
+    const symbolQuotes = quotesBySymbol.get(symbol)!;
+    if (!symbolQuotes || symbolQuotes.length === 0) continue;
+
+    // Ensure table exists first
+    try {
       await ensureStockQuotesTable(symbol);
-      
-      await clickhouseClient.insert({
-        table: getStockQuotesTableName(symbol),
-        values: symbolQuotes.map((quote: any) => ({
-          timestamp: dateToClickHouseDateTime(timestamp),
-          price: quote.price || 0,
-          change: quote.change || 0,
-          change_percent: quote.changePercent || 0,
-          volume: quote.volume || 0,
-          market_cap: quote.marketCap || 0,
-          pe_ratio: quote.peRatio || 0,
-          day_high: quote.dayHigh || 0,
-          day_low: quote.dayLow || 0,
-          day_open: quote.dayOpen || 0,
-          previous_close: quote.previousClose || 0,
-          currency: quote.currency || 'USD',
-        })),
-        format: 'JSONEachRow',
-      });
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] Failed to ensure table for ${symbol}:`, error);
+      continue;
     }
-  } catch (error) {
-    // Silently fail if ClickHouse is not available
-    return;
+
+    const tableName = getStockQuotesTableName(symbol);
+    insertPromises.push(
+      executeBatchInsert(tableName, symbolQuotes, { maxBatchSize: 500 }, `stock quotes for ${symbol}`)
+    );
+  }
+
+  // Wait for all inserts to complete
+  const results = await Promise.allSettled(insertPromises);
+  let totalInserted = 0;
+  let hasErrors = false;
+  let errorCount = 0;
+
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      if (result.value.success) {
+        totalInserted += result.value.data || 0;
+      } else {
+        hasErrors = true;
+        errorCount++;
+        console.error(`[${new Date().toISOString()}] Stock quotes batch insert failed:`, result.value.error);
+      }
+    } else {
+      hasErrors = true;
+      errorCount++;
+      console.error(`[${new Date().toISOString()}] Stock quotes batch insert promise rejected:`, result.reason);
+    }
+  }
+
+  if (totalInserted > 0) {
+    console.log(`[${new Date().toISOString()}] Successfully stored ${totalInserted} stock quotes across ${quotesBySymbol.size} symbols`);
+  }
+
+  if (hasErrors) {
+    console.warn(`[${new Date().toISOString()}] ${errorCount} stock quote insertions failed out of ${insertPromises.length} batches - check logs for details`);
   }
 }
 
@@ -961,7 +1248,7 @@ export async function storeStockQuote(quote: any) {
   return storeStockQuotes([quote]);
 }
 
-// Store market movers data
+// Store market movers data with robust batch processing
 export async function storeMarketMovers(type: 'gainers' | 'losers', movers: any[]) {
   // Validate and filter data
   const validMovers = validateData(movers, (mover: any): mover is MarketMoversSchema => {
@@ -973,32 +1260,31 @@ export async function storeMarketMovers(type: 'gainers' | 'losers', movers: any[
     return;
   }
 
-  try {
-    const timestamp = new Date(); // single snapshot timestamp for all rows
-    const timestampStr = dateToClickHouseDateTime(timestamp);
-    const values = validMovers.map((mover, index) => ({
-      timestamp: timestampStr,
-      type,
-      symbol: mover.symbol,
-      name: mover.name,
-      price: mover.price,
-      change_percent: mover.changePercent,
-      volume: mover.volume || 0,
-      currency: mover.currency || 'USD',
-      rank: index + 1
-    }));
+  const timestamp = new Date(); // single snapshot timestamp for all rows
+  const timestampStr = dateToClickHouseDateTime(timestamp);
+  const values = validMovers.map((mover, index) => ({
+    timestamp: timestampStr,
+    type,
+    symbol: mover.symbol,
+    name: mover.name,
+    price: mover.price,
+    change_percent: mover.change_percent || mover.changePercent || 0,
+    volume: mover.volume || 0,
+    currency: mover.currency || 'USD',
+    rank: index + 1
+  }));
 
-    await clickhouseClient.insert({
-      table: `${CLICKHOUSE_CONFIG.database}.market_movers`,
-      values,
-      format: 'JSONEachRow',
-    });
+  const result = await executeBatchInsert(
+    `${CLICKHOUSE_CONFIG.database}.market_movers`,
+    values,
+    { maxBatchSize: 1000, continueOnError: false },
+    `market movers (${type})`
+  );
 
-    console.log(`[${new Date().toISOString()}] Stored ${movers.length} ${type} in ClickHouse`);
-  } catch (error) {
-    // Silently fail if ClickHouse is not available - don't log errors
-    // The calling code will handle this gracefully
-    return;
+  if (result.success) {
+    console.log(`[${new Date().toISOString()}] Successfully stored ${result.data} ${type} in ClickHouse`);
+  } else {
+    console.error(`[${new Date().toISOString()}] Failed to store market movers (${type}):`, result.error);
   }
 }
 
@@ -1023,9 +1309,10 @@ export async function storeTrackedSymbolsFromMovers(
       console.warn(`[${new Date().toISOString()}] No valid movers to track for ${type}`);
       return;
     }
+
     const lastSeen = new Date();
     const lastSeenStr = dateToClickHouseDateTime(lastSeen);
-    
+
     const values = validMovers.map((mover, index) => ({
       symbol: mover.symbol,
       name: mover.name || mover.shortName || mover.longName || mover.symbol,
@@ -1035,13 +1322,18 @@ export async function storeTrackedSymbolsFromMovers(
       last_seen: lastSeenStr,
     }));
 
-    await clickhouseClient.insert({
-      table: `${CLICKHOUSE_CONFIG.database}.tracked_symbols`,
+    const result = await executeBatchInsert(
+      `${CLICKHOUSE_CONFIG.database}.tracked_symbols`,
       values,
-      format: 'JSONEachRow',
-    });
+      { maxBatchSize: 1000, continueOnError: false },
+      `tracked symbols from ${type}`
+    );
 
-    console.log(`[${new Date().toISOString()}] Stored ${values.length} tracked symbols from ${type} (source: ${source})`);
+    if (result.success) {
+      console.log(`[${new Date().toISOString()}] Successfully stored ${result.data} tracked symbols from ${type} (source: ${source})`);
+    } else {
+      console.error(`[${new Date().toISOString()}] Failed to store tracked symbols from ${type}:`, result.error);
+    }
   } catch (error: any) {
     console.error(`[${new Date().toISOString()}] Error storing tracked symbols from ${type}:`, error.message);
     // Don't throw - allow script to continue
@@ -1246,13 +1538,18 @@ export async function storeHistoricalData(symbol: string, data: any[]) {
       };
     });
 
-    await clickhouseClient.insert({
-      table: getHistoricalDataTableName(symbol),
+    const result = await executeBatchInsert(
+      getHistoricalDataTableName(symbol),
       values,
-      format: 'JSONEachRow',
-    });
+      { maxBatchSize: 1000, continueOnError: false },
+      `historical data for ${symbol}`
+    );
 
-    console.log(`[${new Date().toISOString()}] Stored ${data.length} historical records for ${symbol}`);
+    if (result.success) {
+      console.log(`[${new Date().toISOString()}] Successfully stored ${result.data} historical records for ${symbol}`);
+    } else {
+      console.error(`[${new Date().toISOString()}] Failed to store historical data for ${symbol}:`, result.error);
+    }
   } catch (error: any) {
     // Log error instead of silently failing - helps diagnose issues
     const errorMsg = error?.message || String(error);
@@ -1348,13 +1645,18 @@ export async function storeTrendingSymbols(symbols: any[]) {
       rank: index + 1,
     }));
 
-    await clickhouseClient.insert({
-      table: `${CLICKHOUSE_CONFIG.database}.trending_symbols`,
+    const result = await executeBatchInsert(
+      `${CLICKHOUSE_CONFIG.database}.trending_symbols`,
       values,
-      format: 'JSONEachRow',
-    });
+      { maxBatchSize: 1000, continueOnError: false },
+      'trending symbols'
+    );
 
-    console.log(`[${new Date().toISOString()}] Stored ${symbols.length} trending symbols`);
+    if (result.success) {
+      console.log(`[${new Date().toISOString()}] Successfully stored ${result.data} trending symbols`);
+    } else {
+      console.error(`[${new Date().toISOString()}] Failed to store trending symbols:`, result.error);
+    }
   } catch (error) {
     // Silently fail if ClickHouse is not available
     return;
@@ -1690,11 +1992,16 @@ export async function logScriptStart(scriptName: string, metadata?: Record<strin
       metadata: metadata ? JSON.stringify(metadata) : null,
     };
 
-    await clickhouseClient.insert({
-      table: `${CLICKHOUSE_CONFIG.database}.script_execution_log`,
-      values: [logEntry],
-      format: 'JSONEachRow',
-    });
+    const result = await executeBatchInsert(
+      `${CLICKHOUSE_CONFIG.database}.script_execution_log`,
+      [logEntry],
+      { maxBatchSize: 1, continueOnError: false },
+      `script start log for ${scriptName}`
+    );
+
+    if (!result.success) {
+      throw new Error(result.error);
+    }
 
     // Return a unique identifier (we'll use started_at as identifier)
     return startedAt.toISOString();
@@ -1741,9 +2048,9 @@ export async function logScriptEnd(
     }
 
     // Insert completion record - ReplacingMergeTree will replace the 'running' record
-    await clickhouseClient.insert({
-      table: `${CLICKHOUSE_CONFIG.database}.script_execution_log`,
-      values: [{
+    const result = await executeBatchInsert(
+      `${CLICKHOUSE_CONFIG.database}.script_execution_log`,
+      [{
         script_name: scriptName,
         status,
         started_at: dateToClickHouseDateTime(startedAt),
@@ -1753,8 +2060,13 @@ export async function logScriptEnd(
         error_message: errorMessage || null,
         metadata: metadataString,
       }],
-      format: 'JSONEachRow',
-    });
+      { maxBatchSize: 1, continueOnError: false },
+      `script end log for ${scriptName}`
+    );
+
+    if (!result.success) {
+      throw new Error(result.error);
+    }
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error logging script end for ${scriptName}:`, error);
   }
@@ -1907,13 +2219,18 @@ export async function storeTechnicalIndicators(indicators: TechnicalIndicatorDat
       data_points: indicator.dataPoints,
     }));
 
-    await clickhouseClient.insert({
-      table: `${CLICKHOUSE_CONFIG.database}.technical_indicators`,
+    const result = await executeBatchInsert(
+      `${CLICKHOUSE_CONFIG.database}.technical_indicators`,
       values,
-      format: 'JSONEachRow',
-    });
+      { maxBatchSize: 1000, continueOnError: false },
+      'technical indicators'
+    );
 
-    console.log(`[${new Date().toISOString()}] Stored ${indicators.length} technical indicator records`);
+    if (result.success) {
+      console.log(`[${new Date().toISOString()}] Successfully stored ${result.data} technical indicator records`);
+    } else {
+      console.error(`[${new Date().toISOString()}] Failed to store technical indicators:`, result.error);
+    }
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error storing technical indicators:`, error);
     // Don't throw - allow script to continue
@@ -2096,9 +2413,9 @@ export async function storeAIStrategyResult(result: AIStrategyResult): Promise<v
     const bb = indicators.bollingerBands;
     const ma = indicators.movingAverages;
 
-    await clickhouseClient.insert({
-      table: `${CLICKHOUSE_CONFIG.database}.ai_strategy_results`,
-      values: [{
+    const insertResult = await executeBatchInsert(
+      `${CLICKHOUSE_CONFIG.database}.ai_strategy_results`,
+      [{
         timestamp: dateToClickHouseDateTime(result.timestamp),
         symbol: result.symbol,
         strategy: result.strategy,
@@ -2116,8 +2433,13 @@ export async function storeAIStrategyResult(result: AIStrategyResult): Promise<v
         ema12: ma?.ema12 || null,
         ema26: ma?.ema26 || null,
       }],
-      format: 'JSONEachRow',
-    });
+      { maxBatchSize: 1, continueOnError: false },
+      `AI strategy result for ${result.symbol}`
+    );
+
+    if (!insertResult.success) {
+      throw new Error(insertResult.error);
+    }
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error storing AI strategy result:`, error);
   }
@@ -2143,9 +2465,9 @@ export async function storeAISignal(signal: AISignal): Promise<void> {
   }
 
   try {
-    await clickhouseClient.insert({
-      table: `${CLICKHOUSE_CONFIG.database}.ai_signals`,
-      values: [{
+    const result = await executeBatchInsert(
+      `${CLICKHOUSE_CONFIG.database}.ai_signals`,
+      [{
         signal_id: signal.signalId,
         timestamp: dateToClickHouseDateTime(signal.timestamp),
         symbol: signal.symbol,
@@ -2159,8 +2481,13 @@ export async function storeAISignal(signal: AISignal): Promise<void> {
         trade_id: signal.tradeId || null,
         updated_at: dateToClickHouseDateTime(signal.executedAt || signal.timestamp), // Use executed_at if available, otherwise timestamp
       }],
-      format: 'JSONEachRow',
-    });
+      { maxBatchSize: 1, continueOnError: false },
+      `AI signal for ${signal.symbol}`
+    );
+
+    if (!result.success) {
+      throw new Error(result.error);
+    }
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error storing AI signal:`, error);
   }
@@ -2175,9 +2502,9 @@ export async function storeTrade(trade: Trade): Promise<void> {
   }
 
   try {
-    await clickhouseClient.insert({
-      table: `${CLICKHOUSE_CONFIG.database}.trade_history`,
-      values: [{
+    const result = await executeBatchInsert(
+      `${CLICKHOUSE_CONFIG.database}.trade_history`,
+      [{
         trade_id: trade.tradeId,
         signal_id: trade.signalId,
         timestamp: dateToClickHouseDateTime(trade.timestamp),
@@ -2196,8 +2523,13 @@ export async function storeTrade(trade: Trade): Promise<void> {
         reason: trade.reason,
         updated_at: dateToClickHouseDateTime(trade.exitTimestamp || trade.timestamp), // Use exit_timestamp if available, otherwise timestamp
       }],
-      format: 'JSONEachRow',
-    });
+      { maxBatchSize: 1, continueOnError: false },
+      `trade record for ${trade.symbol}`
+    );
+
+    if (!result.success) {
+      throw new Error(result.error);
+    }
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error storing trade:`, error);
   }
