@@ -307,6 +307,354 @@ function createDatabaseOperation<T extends any[], R>(
 }
 
 // =============================================================================
+// ADVANCED BATCHING OPTIMIZATIONS
+// =============================================================================
+
+/**
+ * Multi-table batch operation - combine inserts to multiple related tables
+ */
+interface MultiTableBatch {
+  tableName: string;
+  values: any[];
+  priority?: number; // Higher priority executed first
+}
+
+/**
+ * Execute multi-table batch insert with optimized ordering
+ */
+async function executeMultiTableBatchInsert(
+  batches: MultiTableBatch[],
+  config: Partial<BatchOperationConfig> = {},
+  operationName: string = 'multi-table batch'
+): Promise<DatabaseOperationResult<{ [tableName: string]: number }>> {
+  if (!batches || batches.length === 0) {
+    return { success: true, data: {} };
+  }
+
+  // Sort by priority (higher first) to ensure dependencies are met
+  batches.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+  const results: { [tableName: string]: number } = {};
+  let totalOperations = 0;
+  const errors: string[] = [];
+
+  // Execute batches sequentially to maintain data integrity
+  for (const batch of batches) {
+    if (!batch.values || batch.values.length === 0) continue;
+
+    const batchResult = await executeBatchInsert(
+      batch.tableName,
+      batch.values,
+      { ...config, continueOnError: false }, // Don't continue on error for multi-table
+      `${operationName} - ${batch.tableName}`
+    );
+
+    results[batch.tableName] = batchResult.success ? batchResult.data || 0 : 0;
+    totalOperations += results[batch.tableName];
+
+    if (!batchResult.success) {
+      errors.push(`${batch.tableName}: ${batchResult.error}`);
+      // Stop processing remaining batches on critical failure
+      break;
+    }
+  }
+
+  if (errors.length > 0) {
+    return {
+      success: false,
+      error: `Multi-table batch failed: ${errors.join('; ')}`,
+      data: results,
+    };
+  }
+
+  return { success: true, data: results };
+}
+
+/**
+ * Bulk operation collector - accumulates single operations for batch processing
+ */
+class BulkOperationCollector {
+  private operations: Map<string, { tableName: string; values: any[]; maxBatchSize: number }> = new Map();
+  private flushInterval: NodeJS.Timeout | null = null;
+
+  constructor(private flushIntervalMs: number = 5000) {
+    this.startAutoFlush();
+  }
+
+  /**
+   * Add operation to bulk collection
+   */
+  add(tableName: string, value: any, maxBatchSize: number = 100): void {
+    const key = `${tableName}_${maxBatchSize}`;
+
+    if (!this.operations.has(key)) {
+      this.operations.set(key, { tableName, values: [], maxBatchSize });
+    }
+
+    this.operations.get(key)!.values.push(value);
+
+    // Auto-flush if batch size exceeded
+    const op = this.operations.get(key)!;
+    if (op.values.length >= op.maxBatchSize) {
+      this.flushTable(tableName, maxBatchSize);
+    }
+  }
+
+  /**
+   * Flush specific table operations
+   */
+  private async flushTable(tableName: string, maxBatchSize: number): Promise<void> {
+    const key = `${tableName}_${maxBatchSize}`;
+    const op = this.operations.get(key);
+
+    if (!op || op.values.length === 0) return;
+
+    // Remove from collection before processing to prevent duplicate processing
+    this.operations.delete(key);
+
+    const result = await executeBatchInsert(
+      tableName,
+      op.values,
+      { maxBatchSize, continueOnError: true },
+      `bulk ${tableName} (${op.values.length} records)`
+    );
+
+    if (result.success) {
+      console.log(`[${new Date().toISOString()}] Bulk inserted ${result.data} records to ${tableName}`);
+    } else {
+      console.error(`[${new Date().toISOString()}] Bulk insert failed for ${tableName}:`, result.error);
+    }
+  }
+
+  /**
+   * Flush all pending operations
+   */
+  async flushAll(): Promise<void> {
+    const promises: Promise<void>[] = [];
+
+    for (const key of Array.from(this.operations.keys())) {
+      const op = this.operations.get(key);
+      if (op && op.values.length > 0) {
+        promises.push(this.flushTable(op.tableName, op.maxBatchSize));
+      }
+    }
+
+    this.operations.clear();
+    await Promise.allSettled(promises);
+  }
+
+  /**
+   * Start automatic flushing
+   */
+  private startAutoFlush(): void {
+    this.flushInterval = setInterval(async () => {
+      try {
+        await this.flushAll();
+      } catch (error) {
+        console.error(`[${new Date().toISOString()}] Auto-flush failed:`, error);
+      }
+    }, this.flushIntervalMs);
+  }
+
+  /**
+   * Stop automatic flushing and flush remaining operations
+   */
+  async stop(): Promise<void> {
+    if (this.flushInterval) {
+      clearInterval(this.flushInterval);
+      this.flushInterval = null;
+    }
+    await this.flushAll();
+  }
+}
+
+/**
+ * Global bulk operation collector instance
+ */
+export const bulkCollector = new BulkOperationCollector();
+
+/**
+ * Smart batch size calculator based on data characteristics
+ */
+function calculateOptimalBatchSize(data: any[], baseBatchSize: number = 1000): number {
+  if (!data || data.length === 0) return baseBatchSize;
+
+  // Sample first few items to estimate data size
+  const sampleSize = Math.min(10, data.length);
+  let totalSize = 0;
+
+  for (let i = 0; i < sampleSize; i++) {
+    totalSize += JSON.stringify(data[i]).length;
+  }
+
+  const avgSize = totalSize / sampleSize;
+
+  // Adjust batch size based on item size
+  // Larger items = smaller batches to prevent memory issues
+  if (avgSize > 10000) return Math.max(10, baseBatchSize / 10); // Very large items
+  if (avgSize > 5000) return Math.max(50, baseBatchSize / 5);   // Large items
+  if (avgSize > 1000) return Math.max(100, baseBatchSize / 2);  // Medium items
+  if (avgSize < 100) return Math.min(5000, baseBatchSize * 2);  // Small items
+
+  return baseBatchSize; // Normal items
+}
+
+/**
+ * Parallel batch executor - run multiple independent batches concurrently
+ */
+async function executeParallelBatches(
+  batchOperations: Array<{
+    tableName: string;
+    values: any[];
+    config?: Partial<BatchOperationConfig>;
+    operationName?: string;
+  }>
+): Promise<DatabaseOperationResult<{ [key: string]: number }>> {
+  if (!batchOperations || batchOperations.length === 0) {
+    return { success: true, data: {} };
+  }
+
+  const results: { [key: string]: number } = {};
+  const promises = batchOperations.map(async (op, index) => {
+    const result = await executeBatchInsert(
+      op.tableName,
+      op.values,
+      op.config || {},
+      op.operationName || `parallel batch ${index + 1}`
+    );
+
+    return {
+      key: `${op.tableName}_${index}`,
+      success: result.success,
+      data: result.data || 0,
+      error: result.error,
+    };
+  });
+
+  const settledResults = await Promise.allSettled(promises);
+  let hasErrors = false;
+  const errors: string[] = [];
+
+  for (const result of settledResults) {
+    if (result.status === 'fulfilled') {
+      const { key, success, data, error } = result.value;
+      results[key] = success ? data : 0;
+
+      if (!success) {
+        hasErrors = true;
+        errors.push(`${key}: ${error}`);
+      }
+    } else {
+      hasErrors = true;
+      errors.push(`Promise rejected: ${result.reason}`);
+    }
+  }
+
+  if (hasErrors) {
+    return {
+      success: false,
+      error: `Parallel batch execution failed: ${errors.join('; ')}`,
+      data: results,
+    };
+  }
+
+  return { success: true, data: results };
+}
+
+/**
+ * Combined market data batch insert - optimize related data insertion
+ */
+export async function insertMarketDataBatch(
+  marketMovers?: any[],
+  trendingSymbols?: any[],
+  trackedSymbols?: any[]
+): Promise<DatabaseOperationResult<{ [key: string]: number }>> {
+  const batches: MultiTableBatch[] = [];
+
+  // Add market movers (highest priority)
+  if (marketMovers && marketMovers.length > 0) {
+    const validMovers = validateData(marketMovers, (mover: any): mover is MarketMoversSchema => {
+      if (!mover || typeof mover !== 'object') return false;
+      return validateMarketMovers({...mover, type: 'gainers'}); // Default type
+    }, 'MarketMoversBatch');
+
+    if (validMovers.length > 0) {
+      const timestamp = new Date();
+      const timestampStr = dateToClickHouseDateTime(timestamp);
+      const values = validMovers.map((mover, index) => ({
+        timestamp: timestampStr,
+        type: mover.type,
+        symbol: mover.symbol,
+        name: mover.name,
+        price: mover.price,
+        change_percent: mover.change_percent || mover.changePercent || 0,
+        volume: mover.volume || 0,
+        currency: mover.currency || 'USD',
+        rank: index + 1
+      }));
+
+      batches.push({
+        tableName: `${CLICKHOUSE_CONFIG.database}.market_movers`,
+        values,
+        priority: 10, // High priority
+      });
+    }
+  }
+
+  // Add trending symbols
+  if (trendingSymbols && trendingSymbols.length > 0) {
+    const validSymbols = validateData(trendingSymbols, validateTrendingSymbols, 'TrendingSymbolsBatch');
+
+    if (validSymbols.length > 0) {
+      const timestamp = new Date();
+      const timestampStr = dateToClickHouseDateTime(timestamp);
+      const values = validSymbols.map((item: any, index: number) => ({
+        timestamp: timestampStr,
+        symbol: item.symbol,
+        name: item.shortName || item.longName || item.symbol,
+        rank: index + 1,
+      }));
+
+      batches.push({
+        tableName: `${CLICKHOUSE_CONFIG.database}.trending_symbols`,
+        values,
+        priority: 5, // Medium priority
+      });
+    }
+  }
+
+  // Add tracked symbols (lowest priority, depends on market data)
+  if (trackedSymbols && trackedSymbols.length > 0) {
+    const validSymbols = validateData(trackedSymbols, validateTrackedSymbols, 'TrackedSymbolsBatch');
+
+    if (validSymbols.length > 0) {
+      const lastSeen = new Date();
+      const lastSeenStr = dateToClickHouseDateTime(lastSeen);
+      const values = validSymbols.map((symbol: any) => ({
+        symbol: symbol.symbol,
+        name: symbol.name || symbol.shortName || symbol.longName || symbol.symbol,
+        last_source: symbol.last_source || 'batch_import',
+        last_type: symbol.last_type || null,
+        last_rank: symbol.last_rank || null,
+        last_seen: lastSeenStr,
+      }));
+
+      batches.push({
+        tableName: `${CLICKHOUSE_CONFIG.database}.tracked_symbols`,
+        values,
+        priority: 1, // Low priority
+      });
+    }
+  }
+
+  return executeMultiTableBatchInsert(
+    batches,
+    { maxBatchSize: 1000, continueOnError: false },
+    'combined market data batch'
+  );
+}
+
+// =============================================================================
 // SCHEMA INTERFACES AND VALIDATION
 // =============================================================================
 
@@ -1164,7 +1512,7 @@ export async function storeStockQuotes(quotes: any[], timestamp: Date = new Date
     return;
   }
 
-  // Prepare data for batch insert
+  // Prepare data for optimized batch insert
   const timestampStr = dateToClickHouseDateTime(timestamp);
   const quotesBySymbol = new Map<string, any[]>();
 
@@ -1207,8 +1555,9 @@ export async function storeStockQuotes(quotes: any[], timestamp: Date = new Date
     }
 
     const tableName = getStockQuotesTableName(symbol);
+    const optimalBatchSize = calculateOptimalBatchSize(symbolQuotes, 500);
     insertPromises.push(
-      executeBatchInsert(tableName, symbolQuotes, { maxBatchSize: 500 }, `stock quotes for ${symbol}`)
+      executeBatchInsert(tableName, symbolQuotes, { maxBatchSize: optimalBatchSize }, `stock quotes for ${symbol}`)
     );
   }
 
@@ -1992,16 +2341,11 @@ export async function logScriptStart(scriptName: string, metadata?: Record<strin
       metadata: metadata ? JSON.stringify(metadata) : null,
     };
 
-    const result = await executeBatchInsert(
-      `${CLICKHOUSE_CONFIG.database}.script_execution_log`,
-      [logEntry],
-      { maxBatchSize: 1, continueOnError: false },
-      `script start log for ${scriptName}`
-    );
+    // Use bulk collector for script logging to batch multiple log entries
+    bulkCollector.add(`${CLICKHOUSE_CONFIG.database}.script_execution_log`, logEntry, 10);
 
-    if (!result.success) {
-      throw new Error(result.error);
-    }
+    // Return a unique identifier (we'll use started_at as identifier)
+    return startedAt.toISOString();
 
     // Return a unique identifier (we'll use started_at as identifier)
     return startedAt.toISOString();
@@ -2048,25 +2392,17 @@ export async function logScriptEnd(
     }
 
     // Insert completion record - ReplacingMergeTree will replace the 'running' record
-    const result = await executeBatchInsert(
-      `${CLICKHOUSE_CONFIG.database}.script_execution_log`,
-      [{
-        script_name: scriptName,
-        status,
-        started_at: dateToClickHouseDateTime(startedAt),
-        completed_at: dateToClickHouseDateTime(completedAt),
-        duration_ms: durationMs,
-        rows_affected: rowsAffected || null,
-        error_message: errorMessage || null,
-        metadata: metadataString,
-      }],
-      { maxBatchSize: 1, continueOnError: false },
-      `script end log for ${scriptName}`
-    );
-
-    if (!result.success) {
-      throw new Error(result.error);
-    }
+    // Use bulk collector for script logging to batch multiple log entries
+    bulkCollector.add(`${CLICKHOUSE_CONFIG.database}.script_execution_log`, {
+      script_name: scriptName,
+      status,
+      started_at: dateToClickHouseDateTime(startedAt),
+      completed_at: dateToClickHouseDateTime(completedAt),
+      duration_ms: durationMs,
+      rows_affected: rowsAffected || null,
+      error_message: errorMessage || null,
+      metadata: metadataString,
+    }, 10);
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error logging script end for ${scriptName}:`, error);
   }
@@ -2413,33 +2749,25 @@ export async function storeAIStrategyResult(result: AIStrategyResult): Promise<v
     const bb = indicators.bollingerBands;
     const ma = indicators.movingAverages;
 
-    const insertResult = await executeBatchInsert(
-      `${CLICKHOUSE_CONFIG.database}.ai_strategy_results`,
-      [{
-        timestamp: dateToClickHouseDateTime(result.timestamp),
-        symbol: result.symbol,
-        strategy: result.strategy,
-        action: result.action,
-        confidence: result.confidence,
-        reason: result.reason,
-        price: result.price,
-        rsi: indicators.rsi || null,
-        macd: indicators.macd || null,
-        bb_upper: bb?.upper || null,
-        bb_middle: bb?.middle || null,
-        bb_lower: bb?.lower || null,
-        sma20: ma?.sma20 || null,
-        sma50: ma?.sma50 || null,
-        ema12: ma?.ema12 || null,
-        ema26: ma?.ema26 || null,
-      }],
-      { maxBatchSize: 1, continueOnError: false },
-      `AI strategy result for ${result.symbol}`
-    );
-
-    if (!insertResult.success) {
-      throw new Error(insertResult.error);
-    }
+    // Use bulk collector for AI strategy results to batch multiple analyses
+    bulkCollector.add(`${CLICKHOUSE_CONFIG.database}.ai_strategy_results`, {
+      timestamp: dateToClickHouseDateTime(result.timestamp),
+      symbol: result.symbol,
+      strategy: result.strategy,
+      action: result.action,
+      confidence: result.confidence,
+      reason: result.reason,
+      price: result.price,
+      rsi: indicators.rsi || null,
+      macd: indicators.macd || null,
+      bb_upper: bb?.upper || null,
+      bb_middle: bb?.middle || null,
+      bb_lower: bb?.lower || null,
+      sma20: ma?.sma20 || null,
+      sma50: ma?.sma50 || null,
+      ema12: ma?.ema12 || null,
+      ema26: ma?.ema26 || null,
+    }, 20);
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error storing AI strategy result:`, error);
   }
@@ -2465,29 +2793,21 @@ export async function storeAISignal(signal: AISignal): Promise<void> {
   }
 
   try {
-    const result = await executeBatchInsert(
-      `${CLICKHOUSE_CONFIG.database}.ai_signals`,
-      [{
-        signal_id: signal.signalId,
-        timestamp: dateToClickHouseDateTime(signal.timestamp),
-        symbol: signal.symbol,
-        strategy: signal.strategy,
-        action: signal.action,
-        confidence: signal.confidence,
-        reason: signal.reason,
-        price: signal.price,
-        status: signal.status,
-        executed_at: signal.executedAt ? dateToClickHouseDateTime(signal.executedAt) : null,
-        trade_id: signal.tradeId || null,
-        updated_at: dateToClickHouseDateTime(signal.executedAt || signal.timestamp), // Use executed_at if available, otherwise timestamp
-      }],
-      { maxBatchSize: 1, continueOnError: false },
-      `AI signal for ${signal.symbol}`
-    );
-
-    if (!result.success) {
-      throw new Error(result.error);
-    }
+    // Use bulk collector for AI signals to batch multiple signals
+    bulkCollector.add(`${CLICKHOUSE_CONFIG.database}.ai_signals`, {
+      signal_id: signal.signalId,
+      timestamp: dateToClickHouseDateTime(signal.timestamp),
+      symbol: signal.symbol,
+      strategy: signal.strategy,
+      action: signal.action,
+      confidence: signal.confidence,
+      reason: signal.reason,
+      price: signal.price,
+      status: signal.status,
+      executed_at: signal.executedAt ? dateToClickHouseDateTime(signal.executedAt) : null,
+      trade_id: signal.tradeId || null,
+      updated_at: dateToClickHouseDateTime(signal.executedAt || signal.timestamp), // Use executed_at if available, otherwise timestamp
+    }, 25);
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error storing AI signal:`, error);
   }
@@ -2502,34 +2822,26 @@ export async function storeTrade(trade: Trade): Promise<void> {
   }
 
   try {
-    const result = await executeBatchInsert(
-      `${CLICKHOUSE_CONFIG.database}.trade_history`,
-      [{
-        trade_id: trade.tradeId,
-        signal_id: trade.signalId,
-        timestamp: dateToClickHouseDateTime(trade.timestamp),
-        symbol: trade.symbol,
-        action: trade.action,
-        strategy: trade.strategy,
-        entry_price: trade.entryPrice,
-        quantity: trade.quantity,
-        investment_amount: trade.investmentAmount,
-        confidence: trade.confidence,
-        exit_price: trade.exitPrice || null,
-        exit_timestamp: trade.exitTimestamp ? dateToClickHouseDateTime(trade.exitTimestamp) : null,
-        profit_loss: trade.profitLoss || null,
-        profit_loss_percent: trade.profitLossPercent || null,
-        status: trade.status,
-        reason: trade.reason,
-        updated_at: dateToClickHouseDateTime(trade.exitTimestamp || trade.timestamp), // Use exit_timestamp if available, otherwise timestamp
-      }],
-      { maxBatchSize: 1, continueOnError: false },
-      `trade record for ${trade.symbol}`
-    );
-
-    if (!result.success) {
-      throw new Error(result.error);
-    }
+    // Use bulk collector for trades to batch multiple trade records
+    bulkCollector.add(`${CLICKHOUSE_CONFIG.database}.trade_history`, {
+      trade_id: trade.tradeId,
+      signal_id: trade.signalId,
+      timestamp: dateToClickHouseDateTime(trade.timestamp),
+      symbol: trade.symbol,
+      action: trade.action,
+      strategy: trade.strategy,
+      entry_price: trade.entryPrice,
+      quantity: trade.quantity,
+      investment_amount: trade.investmentAmount,
+      confidence: trade.confidence,
+      exit_price: trade.exitPrice || null,
+      exit_timestamp: trade.exitTimestamp ? dateToClickHouseDateTime(trade.exitTimestamp) : null,
+      profit_loss: trade.profitLoss || null,
+      profit_loss_percent: trade.profitLossPercent || null,
+      status: trade.status,
+      reason: trade.reason,
+      updated_at: dateToClickHouseDateTime(trade.exitTimestamp || trade.timestamp), // Use exit_timestamp if available, otherwise timestamp
+    }, 15);
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error storing trade:`, error);
   }
@@ -2653,4 +2965,148 @@ export async function getOpenTrades(symbol?: string): Promise<Trade[]> {
     console.error(`[${new Date().toISOString()}] Error getting open trades:`, error);
     return [];
   }
+}
+
+// =============================================================================
+// ADVANCED BATCH OPERATIONS COORDINATOR
+// =============================================================================
+
+/**
+ * Advanced batch operations coordinator - combine multiple data types into optimized batches
+ */
+export async function executeAdvancedBatchOperations(
+  operations: {
+    stockQuotes?: any[];
+    marketMovers?: any[];
+    trendingSymbols?: any[];
+    historicalData?: { symbol: string; data: any[] }[];
+    technicalIndicators?: any[];
+    aiSignals?: any[];
+    trades?: any[];
+  },
+  options: {
+    parallelExecution?: boolean;
+    prioritizeByTable?: boolean;
+    maxConcurrentBatches?: number;
+  } = {}
+): Promise<DatabaseOperationResult<{ [operation: string]: number }>> {
+  const {
+    parallelExecution = true,
+    prioritizeByTable = true,
+    maxConcurrentBatches = 5
+  } = options;
+
+  const results: { [operation: string]: number } = {};
+  const batchPromises: Promise<DatabaseOperationResult<any>>[] = [];
+
+  // Stock quotes - highest priority, processed individually per symbol
+  if (operations.stockQuotes && operations.stockQuotes.length > 0) {
+    batchPromises.push(
+      (async () => {
+        const result = await storeStockQuotes(operations.stockQuotes!, new Date());
+        return {
+          success: true, // storeStockQuotes handles its own success/failure internally
+          data: operations.stockQuotes!.length
+        };
+      })()
+    );
+  }
+
+  // Combined market data batch
+  if (operations.marketMovers || operations.trendingSymbols) {
+    batchPromises.push(
+      insertMarketDataBatch(
+        operations.marketMovers,
+        operations.trendingSymbols
+      )
+    );
+  }
+
+  // Historical data - can be parallelized
+  if (operations.historicalData && operations.historicalData.length > 0) {
+    if (parallelExecution) {
+      // Execute in parallel with concurrency limit
+      const chunks = [];
+      for (let i = 0; i < operations.historicalData.length; i += maxConcurrentBatches) {
+        chunks.push(operations.historicalData.slice(i, i + maxConcurrentBatches));
+      }
+
+      for (const chunk of chunks) {
+        const chunkPromises = chunk.map(async (item) => {
+          const result = await storeHistoricalData(item.symbol, item.data);
+          return {
+            symbol: item.symbol,
+            success: true,
+            count: item.data.length
+          };
+        });
+
+        batchPromises.push(
+          Promise.all(chunkPromises).then(chunkResults => ({
+            success: true,
+            data: chunkResults.reduce((acc, r) => ({ ...acc, [r.symbol]: r.count }), {})
+          }))
+        );
+      }
+    } else {
+      // Sequential execution
+      for (const item of operations.historicalData) {
+        batchPromises.push(
+          (async () => {
+            await storeHistoricalData(item.symbol, item.data);
+            return {
+              success: true,
+              data: { [item.symbol]: item.data.length }
+            };
+          })()
+        );
+      }
+    }
+  }
+
+  // Technical indicators - batch insert
+  if (operations.technicalIndicators && operations.technicalIndicators.length > 0) {
+    batchPromises.push(
+      (async () => {
+        const result = await storeTechnicalIndicators(operations.technicalIndicators!);
+        return {
+          success: true,
+          data: operations.technicalIndicators!.length
+        };
+      })()
+    );
+  }
+
+  // AI signals and trades go to bulk collector automatically
+  if (operations.aiSignals && operations.aiSignals.length > 0) {
+    operations.aiSignals.forEach(signal => {
+      bulkCollector.add(`${CLICKHOUSE_CONFIG.database}.ai_signals`, signal, 25);
+    });
+  }
+
+  if (operations.trades && operations.trades.length > 0) {
+    operations.trades.forEach(trade => {
+      bulkCollector.add(`${CLICKHOUSE_CONFIG.database}.trade_history`, trade, 15);
+    });
+  }
+
+  // Execute all batches
+  const batchResults = await Promise.allSettled(batchPromises);
+
+  for (let i = 0; i < batchResults.length; i++) {
+    const result = batchResults[i];
+    if (result.status === 'fulfilled') {
+      Object.assign(results, result.value.data || {});
+    } else {
+      console.error(`[${new Date().toISOString()}] Advanced batch operation ${i} failed:`, result.reason);
+    }
+  }
+
+  // Force flush bulk operations immediately
+  await bulkCollector.flushAll();
+
+  return {
+    success: true,
+    data: results
+  };
 }

@@ -15,6 +15,29 @@ import { initializeClickHouse } from './services/clickhouse';
 import { log } from './utils/helpers';
 import { startDataFetcher } from './jobs/dataFetcher';
 
+// Graceful shutdown handler for bulk operations
+async function flushBulkOperations() {
+  try {
+    const { bulkCollector } = await import('./services/clickhouse');
+    await (bulkCollector as any).flushAll();
+    console.log(`[${new Date().toISOString()}] Bulk operations flushed successfully`);
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error flushing bulk operations:`, error);
+  }
+}
+
+process.on('SIGINT', async () => {
+  console.log(`[${new Date().toISOString()}] Received SIGINT, flushing bulk operations...`);
+  await flushBulkOperations();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log(`[${new Date().toISOString()}] Received SIGTERM, flushing bulk operations...`);
+  await flushBulkOperations();
+  process.exit(0);
+});
+
 const app = express();
 const httpServer = createServer(app);
 
